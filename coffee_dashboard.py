@@ -151,14 +151,12 @@ def process_sales_files(uploaded_files):
     column_mapping = {
         '商品实收': '销售金额',
         '商品销量': '销售数量',
-        # 请确保您的CSV里有 '订单数' 这一列，如果没有，请在这里修改映射，例如 '总订单': '订单数'
         '订单数': '订单数' 
     }
     df_sales = df_sales.rename(columns=column_mapping)
 
     # 确保数值列是数字类型
     numeric_cols = ['销售金额', '销售数量']
-    # 如果源文件包含订单数或关联订单数，也进行转换
     for optional_col in ['订单数', '关联订单数']:
         if optional_col in df_sales.columns:
             numeric_cols.append(optional_col)
@@ -172,7 +170,7 @@ def process_sales_files(uploaded_files):
             
     # 补全缺失列，防止计算报错
     if '订单数' not in df_sales.columns:
-        df_sales['订单数'] = 0 # 如果没上传订单数，默认为0
+        df_sales['订单数'] = 0 
     if '关联订单数' not in df_sales.columns:
         df_sales['关联订单数'] = 0
         
@@ -206,19 +204,17 @@ def calculate_metrics(df, operate_days):
     
     qty = df['销售数量'].sum()
     amt = df['销售金额'].sum()
-    orders = df['订单数'].sum() # 新增：总订单数
+    orders = df['订单数'].sum() 
     profit = df['商品毛利'].sum()
     assoc_orders = df['关联订单数'].sum() if '关联订单数' in df.columns else 0
     
-    # 衍生指标
-    cup_price = (amt / qty) if qty > 0 else 0 # 杯单价
-    ticket_price = (amt / orders) if orders > 0 else 0 # 客单价 (新增)
+    cup_price = (amt / qty) if qty > 0 else 0 
+    ticket_price = (amt / orders) if orders > 0 else 0 
     margin = (profit / amt * 100) if amt > 0 else 0
     
     daily_qty = qty / operate_days
     daily_amt = amt / operate_days
     
-    # 关联订单率
     assoc_rate = (assoc_orders / qty * 100) if qty > 0 else 0
     
     return qty, amt, orders, profit, cup_price, ticket_price, margin, daily_qty, daily_amt, assoc_rate
@@ -245,7 +241,6 @@ if uploaded_sales_files:
     if df_final is not None:
         st.sidebar.success(f"✅ 数据加载完成")
 else:
-    # 欢迎页面
     st.image("https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=1200&h=300&q=80", use_container_width=True)
     st.markdown("""
     <div style="text-align: center; padding: 40px;">
@@ -303,8 +298,6 @@ if selected_stores:
     if not df_current.empty: df_current = df_current[df_current['门店名称'].isin(selected_stores)]
     if not df_previous.empty: df_previous = df_previous[df_previous['门店名称'].isin(selected_stores)]
 
-# 计算 KPI
-# Unpacking now has 10 values
 cur_qty, cur_amt, cur_orders, cur_profit, cur_cup_price, cur_ticket_price, cur_margin, cur_daily_qty, cur_daily_amt, cur_assoc_rate = calculate_metrics(df_current, days_current)
 
 if is_comparison_mode and not df_previous.empty:
@@ -312,10 +305,10 @@ if is_comparison_mode and not df_previous.empty:
     
     delta_qty = ((cur_qty - prev_qty) / prev_qty) if prev_qty != 0 else 0
     delta_amt = ((cur_amt - prev_amt) / prev_amt) if prev_amt != 0 else 0
-    delta_orders = ((cur_orders - prev_orders) / prev_orders) if prev_orders != 0 else 0 # 订单环比
+    delta_orders = ((cur_orders - prev_orders) / prev_orders) if prev_orders != 0 else 0 
     
     delta_cup_price = ((cur_cup_price - prev_cup_price) / prev_cup_price) if prev_cup_price != 0 else 0
-    delta_ticket_price = ((cur_ticket_price - prev_ticket_price) / prev_ticket_price) if prev_ticket_price != 0 else 0 # 客单价环比
+    delta_ticket_price = ((cur_ticket_price - prev_ticket_price) / prev_ticket_price) if prev_ticket_price != 0 else 0 
     
     delta_margin = cur_margin - prev_margin
     delta_daily_qty = ((cur_daily_qty - prev_daily_qty) / prev_daily_qty) if prev_daily_qty != 0 else 0
@@ -344,34 +337,37 @@ if df_current.empty:
 # -----------------------------------------------------------------------------
 # 7. KPI 卡片区域 (布局调整：4x2)
 # -----------------------------------------------------------------------------
-def metric_card(title, value, delta, prefix="", suffix="", is_percent=False):
+# 修复：增加了 icon 参数的接收
+def metric_card(title, value, delta, prefix="", suffix="", is_percent=False, icon=""):
     delta_str = None
     if delta is not None:
         if is_percent: delta_str = f"{delta:+.2f} pts"
         else: delta_str = f"{delta:+.2%}"
     
     with st.container(border=True):
-        st.metric(label=title, value=f"{prefix}{value}{suffix}", delta=delta_str, delta_color="inverse")
+        # 如果有图标，可以加在标题前
+        label_text = f"{icon} {title}" if icon else title
+        st.metric(label=label_text, value=f"{prefix}{value}{suffix}", delta=delta_str, delta_color="inverse")
 
 # 第一行：核心业绩 (Core Business)
 st.subheader("📦 经营总量 (Volume & Revenue)")
 r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-with r1c1: metric_card("总订单数", int(cur_orders), delta_orders, icon="🧾") # 新增
-with r1c2: metric_card("总销量", int(cur_qty), delta_qty, suffix=" 杯")
-with r1c3: metric_card("总销售额", f"{cur_amt:,.2f}", delta_amt, prefix="¥")
-with r1c4: metric_card("客单价", f"{cur_ticket_price:.2f}", delta_ticket_price, prefix="¥") # 新增
+with r1c1: metric_card("总订单数", int(cur_orders), delta_orders, icon="🧾")
+with r1c2: metric_card("总销量", int(cur_qty), delta_qty, suffix=" 杯", icon="🛒")
+with r1c3: metric_card("总销售额", f"{cur_amt:,.2f}", delta_amt, prefix="¥", icon="💰")
+with r1c4: metric_card("客单价", f"{cur_ticket_price:.2f}", delta_ticket_price, prefix="¥", icon="💸")
 
 # 第二行：效率与质量 (Efficiency & Quality)
 st.subheader("🚀 日均效率 & 盈利 (Efficiency)")
 r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-with r2c1: metric_card("日均营收", f"{cur_daily_amt:,.2f}", delta_daily_amt, prefix="¥")
-with r2c2: metric_card("杯单价", f"{cur_cup_price:.2f}", delta_cup_price, prefix="¥")
+with r2c1: metric_card("日均营收", f"{cur_daily_amt:,.2f}", delta_daily_amt, prefix="¥", icon="💳")
+with r2c2: metric_card("杯单价", f"{cur_cup_price:.2f}", delta_cup_price, prefix="¥", icon="🏷️")
 with r2c3:
     if uploaded_cost:
-        metric_card("平均毛利率", f"{cur_margin:.2f}", delta_margin, suffix="%", is_percent=True)
+        metric_card("平均毛利率", f"{cur_margin:.2f}", delta_margin, suffix="%", is_percent=True, icon="📈")
     else:
-        with st.container(border=True): st.metric("平均毛利率", "--")
-with r2c4: metric_card("关联订单率", f"{cur_assoc_rate:.2f}", delta_assoc_rate, suffix="%", is_percent=True)
+        with st.container(border=True): st.metric("📈 平均毛利率", "--")
+with r2c4: metric_card("关联订单率", f"{cur_assoc_rate:.2f}", delta_assoc_rate, suffix="%", is_percent=True, icon="🔗")
 
 st.markdown("---")
 
