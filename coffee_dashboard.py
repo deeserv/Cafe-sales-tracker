@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
 
 # -----------------------------------------------------------------------------
 # 1. 核心配置与 CSS 注入 (UI 灵魂)
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="CoffeeLens 智能数据看板",
+    page_title="顿角咖啡智能数据看板",
     page_icon="☕",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -147,14 +148,12 @@ def process_sales_files(uploaded_files):
     if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
     if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
 
-    # 映射列名 (移除了关联订单数映射)
     column_mapping = {
         '商品实收': '销售金额',
         '商品销量': '销售数量'
     }
     df_sales = df_sales.rename(columns=column_mapping)
 
-    # 确保数值列是数字类型
     numeric_cols = ['销售金额', '销售数量']
     for col in numeric_cols:
         if col in df_sales.columns:
@@ -194,7 +193,6 @@ def calculate_metrics(df, operate_days):
     amt = df['销售金额'].sum()
     profit = df['商品毛利'].sum()
     
-    # 衍生指标
     cup_price = (amt / qty) if qty > 0 else 0 
     margin = (profit / amt * 100) if amt > 0 else 0
     
@@ -206,9 +204,17 @@ def calculate_metrics(df, operate_days):
 # -----------------------------------------------------------------------------
 # 3. 侧边栏布局
 # -----------------------------------------------------------------------------
-st.sidebar.image("https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=400&q=80", use_container_width=True)
-st.sidebar.markdown("## ☕ CoffeeLens Pro")
-st.sidebar.caption("智能经营决策系统 v3.6")
+# === 品牌 LOGO 区域 (关键修改) ===
+# 尝试加载本地 logo.png，如果不存在则使用备用网络图
+logo_path = "logo.png" # 假设您上传的文件名叫 logo.png
+if os.path.exists(logo_path):
+    st.sidebar.image(logo_path, width=120)
+else:
+    # 备用图，防止本地调试时没有图片报错
+    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/751/751621.png", width=100)
+
+st.sidebar.markdown("## 顿角咖啡智能数据看板")
+st.sidebar.caption("Dunjiao Coffee · Intelligent BI System")
 
 with st.sidebar.expander("📂 数据源配置", expanded=True):
     uploaded_sales_files = st.file_uploader("1. 上传销售数据 (多选)", type=["csv", "xlsx"], accept_multiple_files=True)
@@ -224,14 +230,20 @@ if uploaded_sales_files:
     if df_final is not None:
         st.sidebar.success(f"✅ 数据加载完成")
 else:
-    # 欢迎页面
-    st.image("https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=1200&h=300&q=80", use_container_width=True)
     st.markdown("""
     <div style="text-align: center; padding: 40px;">
-        <h1 style="font-size: 42px; color: #1E293B;">👋 欢迎使用 CoffeeLens</h1>
-        <p style="color: #64748B; font-size: 18px;">专为连锁咖啡打造的智能数据分析平台</p>
+        <h1 style="font-size: 42px; color: #1E293B;">👋 欢迎使用顿角咖啡智能数据看板</h1>
+        <p style="color: #64748B; font-size: 18px;">专为顿角咖啡打造的智能经营分析平台</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    c1, c2, c3 = st.columns(3)
+    with c2:
+        if os.path.exists(logo_path):
+            st.image(logo_path, use_container_width=True)
+        else:
+            st.image("https://cdn-icons-png.flaticon.com/512/2935/2935413.png", use_container_width=True, caption="Dunjiao Coffee Analytics")
+    
     st.stop()
 
 # -----------------------------------------------------------------------------
@@ -282,7 +294,7 @@ if selected_stores:
     if not df_current.empty: df_current = df_current[df_current['门店名称'].isin(selected_stores)]
     if not df_previous.empty: df_previous = df_previous[df_previous['门店名称'].isin(selected_stores)]
 
-# 计算 KPI (移除 assoc_rate)
+# 计算 KPI
 cur_qty, cur_amt, cur_profit, cur_cup_price, cur_margin, cur_daily_qty, cur_daily_amt = calculate_metrics(df_current, days_current)
 
 if is_comparison_mode and not df_previous.empty:
@@ -300,10 +312,11 @@ else:
 # -----------------------------------------------------------------------------
 # 6. 主界面
 # -----------------------------------------------------------------------------
+# 顶部 Banner
 st.image("https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=1200&h=250&q=80", use_container_width=True)
 
 c_title, c_period = st.columns([2, 1])
-with c_title: st.title("📊 连锁门店经营概览")
+with c_title: st.title("📊 顿角咖啡智能数据看板")
 with c_period:
     if is_comparison_mode:
         st.markdown(f"<div style='text-align:right; padding-top:10px; color:#64748B;'><b>分析周期</b><br><span style='color:#3B82F6; font-size:1.1em'>{p_current}</span> vs <span style='color:#94A3B8'>{p_previous}</span></div>", unsafe_allow_html=True)
@@ -315,7 +328,7 @@ if df_current.empty:
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 7. KPI 卡片区域 (布局调整：恢复3x3，移除关联率)
+# 7. KPI 卡片区域
 # -----------------------------------------------------------------------------
 def metric_card(title, value, delta, prefix="", suffix="", is_percent=False, icon=""):
     delta_str = None
@@ -334,7 +347,7 @@ with r1c1: metric_card("总销量", int(cur_qty), delta_qty, suffix=" 杯", icon
 with r1c2: metric_card("总销售额", f"{cur_amt:,.2f}", delta_amt, prefix="¥", icon="💰")
 with r1c3: metric_card("平均杯单价", f"{cur_cup_price:.2f}", delta_price, prefix="¥", icon="🏷️")
 
-# 第二行：效率与质量 (移除关联订单率，3列布局)
+# 第二行：效率与质量
 st.subheader("🚀 日均效率 & 盈利 (Efficiency)")
 r2c1, r2c2, r2c3 = st.columns(3)
 with r2c1: metric_card("日均杯数", f"{cur_daily_qty:.1f}", delta_daily_qty, suffix=" 杯", icon="📅")
@@ -367,7 +380,7 @@ c1, c2 = st.columns(2)
 # 注意：图表数据源必须聚合去重
 df_chart_data = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
 if '商品类别' in df_display.columns:
-    # 尝试保留一个类别用于显示
+    # 尝试保留一个类别用于显示 (取众数)
     cat_map = df_display.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
     df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
 
