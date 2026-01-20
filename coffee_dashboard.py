@@ -147,19 +147,17 @@ def process_sales_files(uploaded_files):
     if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
     if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
 
-    # 映射列名 (新增：订单数)
+    # 映射列名
     column_mapping = {
         '商品实收': '销售金额',
-        '商品销量': '销售数量',
-        '订单数': '订单数' 
+        '商品销量': '销售数量'
     }
     df_sales = df_sales.rename(columns=column_mapping)
 
     # 确保数值列是数字类型
     numeric_cols = ['销售金额', '销售数量']
-    for optional_col in ['订单数', '关联订单数']:
-        if optional_col in df_sales.columns:
-            numeric_cols.append(optional_col)
+    if '关联订单数' in df_sales.columns:
+        numeric_cols.append('关联订单数')
     
     for col in numeric_cols:
         if col in df_sales.columns:
@@ -168,9 +166,7 @@ def process_sales_files(uploaded_files):
                 errors='coerce'
             ).fillna(0)
             
-    # 补全缺失列，防止计算报错
-    if '订单数' not in df_sales.columns:
-        df_sales['订单数'] = 0 
+    # 补全缺失列
     if '关联订单数' not in df_sales.columns:
         df_sales['关联订单数'] = 0
         
@@ -200,36 +196,35 @@ def merge_cost_data(df_sales, cost_file):
     return df_sales
 
 def calculate_metrics(df, operate_days):
-    if df.empty or operate_days <= 0: return 0, 0, 0, 0, 0, 0, 0, 0, 0
+    if df.empty or operate_days <= 0: return 0, 0, 0, 0, 0, 0, 0, 0
     
     qty = df['销售数量'].sum()
     amt = df['销售金额'].sum()
-    orders = df['订单数'].sum() 
     profit = df['商品毛利'].sum()
     assoc_orders = df['关联订单数'].sum() if '关联订单数' in df.columns else 0
     
-    cup_price = (amt / qty) if qty > 0 else 0 
-    ticket_price = (amt / orders) if orders > 0 else 0 
+    # 衍生指标
+    cup_price = (amt / qty) if qty > 0 else 0 # 杯单价
     margin = (profit / amt * 100) if amt > 0 else 0
     
     daily_qty = qty / operate_days
     daily_amt = amt / operate_days
     
+    # 关联订单率
     assoc_rate = (assoc_orders / qty * 100) if qty > 0 else 0
     
-    return qty, amt, orders, profit, cup_price, ticket_price, margin, daily_qty, daily_amt, assoc_rate
+    return qty, amt, profit, cup_price, margin, daily_qty, daily_amt, assoc_rate
 
 # -----------------------------------------------------------------------------
 # 3. 侧边栏布局
 # -----------------------------------------------------------------------------
 st.sidebar.image("https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=400&q=80", use_container_width=True)
 st.sidebar.markdown("## ☕ CoffeeLens Pro")
-st.sidebar.caption("智能经营决策系统 v3.2")
+st.sidebar.caption("智能经营决策系统 v3.4")
 
 with st.sidebar.expander("📂 数据源配置", expanded=True):
     uploaded_sales_files = st.file_uploader("1. 上传销售数据 (多选)", type=["csv", "xlsx"], accept_multiple_files=True)
     uploaded_cost = st.file_uploader("2. 上传成本档案", type=["csv", "xlsx"])
-    st.info("💡 提示：销售数据请包含【订单数】列以启用客单价分析。")
 
 # -----------------------------------------------------------------------------
 # 4. 数据加载
@@ -241,6 +236,7 @@ if uploaded_sales_files:
     if df_final is not None:
         st.sidebar.success(f"✅ 数据加载完成")
 else:
+    # 欢迎页面
     st.image("https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=1200&h=300&q=80", use_container_width=True)
     st.markdown("""
     <div style="text-align: center; padding: 40px;">
@@ -298,24 +294,21 @@ if selected_stores:
     if not df_current.empty: df_current = df_current[df_current['门店名称'].isin(selected_stores)]
     if not df_previous.empty: df_previous = df_previous[df_previous['门店名称'].isin(selected_stores)]
 
-cur_qty, cur_amt, cur_orders, cur_profit, cur_cup_price, cur_ticket_price, cur_margin, cur_daily_qty, cur_daily_amt, cur_assoc_rate = calculate_metrics(df_current, days_current)
+# 计算 KPI
+cur_qty, cur_amt, cur_profit, cur_cup_price, cur_margin, cur_daily_qty, cur_daily_amt, cur_assoc_rate = calculate_metrics(df_current, days_current)
 
 if is_comparison_mode and not df_previous.empty:
-    prev_qty, prev_amt, prev_orders, prev_profit, prev_cup_price, prev_ticket_price, prev_margin, prev_daily_qty, prev_daily_amt, prev_assoc_rate = calculate_metrics(df_previous, days_previous)
+    prev_qty, prev_amt, prev_profit, prev_cup_price, prev_margin, prev_daily_qty, prev_daily_amt, prev_assoc_rate = calculate_metrics(df_previous, days_previous)
     
     delta_qty = ((cur_qty - prev_qty) / prev_qty) if prev_qty != 0 else 0
     delta_amt = ((cur_amt - prev_amt) / prev_amt) if prev_amt != 0 else 0
-    delta_orders = ((cur_orders - prev_orders) / prev_orders) if prev_orders != 0 else 0 
-    
-    delta_cup_price = ((cur_cup_price - prev_cup_price) / prev_cup_price) if prev_cup_price != 0 else 0
-    delta_ticket_price = ((cur_ticket_price - prev_ticket_price) / prev_ticket_price) if prev_ticket_price != 0 else 0 
-    
+    delta_price = ((cur_cup_price - prev_cup_price) / prev_cup_price) if prev_cup_price != 0 else 0
     delta_margin = cur_margin - prev_margin
     delta_daily_qty = ((cur_daily_qty - prev_daily_qty) / prev_daily_qty) if prev_daily_qty != 0 else 0
     delta_daily_amt = ((cur_daily_amt - prev_daily_amt) / prev_daily_amt) if prev_daily_amt != 0 else 0
     delta_assoc_rate = cur_assoc_rate - prev_assoc_rate
 else:
-    delta_qty = delta_amt = delta_orders = delta_cup_price = delta_ticket_price = delta_margin = delta_daily_qty = delta_daily_amt = delta_assoc_rate = None
+    delta_qty = delta_amt = delta_price = delta_margin = delta_daily_qty = delta_daily_amt = delta_assoc_rate = None
 
 # -----------------------------------------------------------------------------
 # 6. 主界面
@@ -335,9 +328,8 @@ if df_current.empty:
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 7. KPI 卡片区域 (布局调整：4x2)
+# 7. KPI 卡片区域 (布局优化：3列 + 4列)
 # -----------------------------------------------------------------------------
-# 修复：增加了 icon 参数的接收
 def metric_card(title, value, delta, prefix="", suffix="", is_percent=False, icon=""):
     delta_str = None
     if delta is not None:
@@ -345,23 +337,21 @@ def metric_card(title, value, delta, prefix="", suffix="", is_percent=False, ico
         else: delta_str = f"{delta:+.2%}"
     
     with st.container(border=True):
-        # 如果有图标，可以加在标题前
         label_text = f"{icon} {title}" if icon else title
         st.metric(label=label_text, value=f"{prefix}{value}{suffix}", delta=delta_str, delta_color="inverse")
 
-# 第一行：核心业绩 (Core Business)
+# 第一行：核心业绩
 st.subheader("📦 经营总量 (Volume & Revenue)")
-r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-with r1c1: metric_card("总订单数", int(cur_orders), delta_orders, icon="🧾")
-with r1c2: metric_card("总销量", int(cur_qty), delta_qty, suffix=" 杯", icon="🛒")
-with r1c3: metric_card("总销售额", f"{cur_amt:,.2f}", delta_amt, prefix="¥", icon="💰")
-with r1c4: metric_card("客单价", f"{cur_ticket_price:.2f}", delta_ticket_price, prefix="¥", icon="💸")
+r1c1, r1c2, r1c3 = st.columns(3)
+with r1c1: metric_card("总销量", int(cur_qty), delta_qty, suffix=" 杯", icon="🛒")
+with r1c2: metric_card("总销售额", f"{cur_amt:,.2f}", delta_amt, prefix="¥", icon="💰")
+with r1c3: metric_card("平均杯单价", f"{cur_cup_price:.2f}", delta_price, prefix="¥", icon="🏷️")
 
-# 第二行：效率与质量 (Efficiency & Quality)
+# 第二行：效率与质量
 st.subheader("🚀 日均效率 & 盈利 (Efficiency)")
 r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-with r2c1: metric_card("日均营收", f"{cur_daily_amt:,.2f}", delta_daily_amt, prefix="¥", icon="💳")
-with r2c2: metric_card("杯单价", f"{cur_cup_price:.2f}", delta_cup_price, prefix="¥", icon="🏷️")
+with r2c1: metric_card("日均杯数", f"{cur_daily_qty:.1f}", delta_daily_qty, suffix=" 杯", icon="📅")
+with r2c2: metric_card("日均营收", f"{cur_daily_amt:,.2f}", delta_daily_amt, prefix="¥", icon="💳")
 with r2c3:
     if uploaded_cost:
         metric_card("平均毛利率", f"{cur_margin:.2f}", delta_margin, suffix="%", is_percent=True, icon="📈")
@@ -391,6 +381,7 @@ c1, c2 = st.columns(2)
 with c1:
     with st.container(border=True):
         st.markdown("##### 🔥 本期销量排行 (Top 10)")
+        # 修复聚合逻辑：只按商品名称聚合，确保去重
         top_sales = df_display.groupby('商品名称', as_index=False)['销售数量'].sum()
         top_sales = top_sales.sort_values('销售数量', ascending=True).tail(10)
         
@@ -431,6 +422,7 @@ with c2:
                 else: st.info("暂无类别数据")
 
             with tab_prod:
+                # 修复聚合逻辑：只按商品名称聚合，确保去重
                 df_prod = df_display.groupby('商品名称', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True).tail(10)
                 df_prod['商品毛利'] = df_prod['商品毛利'].round(2)
                 df_prod['贡献率'] = np.where(total_profit>0, df_prod['商品毛利']/total_profit, 0)
@@ -483,6 +475,7 @@ st.markdown("---")
 if uploaded_cost:
     st.markdown("### 🧠 智能产品矩阵 (BCG)")
     
+    # 修复聚合逻辑：只按商品名称聚合，确保去重
     matrix_df = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
     matrix_df['毛利率'] = np.where(matrix_df['销售金额']>0, matrix_df['商品毛利']/matrix_df['销售金额'], 0)
     matrix_df['日均销量'] = matrix_df['销售数量'] / days_current
@@ -524,14 +517,14 @@ if uploaded_cost:
             else: st.caption("暂无")
 
 # -----------------------------------------------------------------------------
-# 11. 明细表格 (带关联订单率)
+# 11. 明细表格 (带关联订单率) - 修复重复问题
 # -----------------------------------------------------------------------------
 st.markdown("### 📄 商品明细透视")
 
-group_cols = ['商品名称']
-if '商品类别' in df_display.columns: group_cols.insert(0, '商品类别')
+# 关键修复：Groupby 时仅使用 '商品名称'，强制忽略 '商品类别'，实现彻底合并
+group_cols = ['商品名称'] 
 
-# 聚合逻辑：确保包含订单数和关联订单数
+# 聚合逻辑：确保包含关联订单数
 df_view = df_display.groupby(group_cols, as_index=False).agg({
     '销售数量': 'sum',
     '销售金额': 'sum',
@@ -549,8 +542,8 @@ df_view = df_view.sort_values('销售数量', ascending=False)
 df_view['序号'] = range(1, len(df_view) + 1)
 df_view = df_view.round(2)
 
+# 选择列 (去掉了商品类别)
 cols = ['序号', '商品名称', '销售数量', '销售金额', '商品毛利额', '商品毛利率', '商品销售占比', '关联订单率']
-if '商品类别' in df_view.columns: cols.insert(2, '商品类别')
 
 with st.container(border=True):
     st.dataframe(
@@ -558,7 +551,6 @@ with st.container(border=True):
         column_config={
             "序号": st.column_config.NumberColumn("排名", width="small"),
             "商品名称": st.column_config.TextColumn("商品名称", help="售卖的商品名称", width="medium"),
-            "商品类别": st.column_config.TextColumn("类别", width="small"),
             "销售数量": st.column_config.ProgressColumn("销量 (杯)", format="%d", min_value=0, max_value=int(df_view['销售数量'].max())),
             "销售金额": st.column_config.NumberColumn("销售额", format="¥%.2f"),
             "商品毛利额": st.column_config.NumberColumn("毛利额", format="¥%.2f"),
