@@ -147,7 +147,7 @@ def process_sales_files(uploaded_files):
     if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
     if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
 
-    # 映射列名
+    # 映射列名 (移除了关联订单数映射)
     column_mapping = {
         '商品实收': '销售金额',
         '商品销量': '销售数量'
@@ -195,7 +195,7 @@ def calculate_metrics(df, operate_days):
     profit = df['商品毛利'].sum()
     
     # 衍生指标
-    cup_price = (amt / qty) if qty > 0 else 0 # 杯单价
+    cup_price = (amt / qty) if qty > 0 else 0 
     margin = (profit / amt * 100) if amt > 0 else 0
     
     daily_qty = qty / operate_days
@@ -208,7 +208,7 @@ def calculate_metrics(df, operate_days):
 # -----------------------------------------------------------------------------
 st.sidebar.image("https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=400&q=80", use_container_width=True)
 st.sidebar.markdown("## ☕ CoffeeLens Pro")
-st.sidebar.caption("智能经营决策系统 v3.5")
+st.sidebar.caption("智能经营决策系统 v3.6")
 
 with st.sidebar.expander("📂 数据源配置", expanded=True):
     uploaded_sales_files = st.file_uploader("1. 上传销售数据 (多选)", type=["csv", "xlsx"], accept_multiple_files=True)
@@ -282,7 +282,7 @@ if selected_stores:
     if not df_current.empty: df_current = df_current[df_current['门店名称'].isin(selected_stores)]
     if not df_previous.empty: df_previous = df_previous[df_previous['门店名称'].isin(selected_stores)]
 
-# 计算 KPI
+# 计算 KPI (移除 assoc_rate)
 cur_qty, cur_amt, cur_profit, cur_cup_price, cur_margin, cur_daily_qty, cur_daily_amt = calculate_metrics(df_current, days_current)
 
 if is_comparison_mode and not df_previous.empty:
@@ -315,7 +315,7 @@ if df_current.empty:
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 7. KPI 卡片区域 (布局调整：3x3)
+# 7. KPI 卡片区域 (布局调整：恢复3x3，移除关联率)
 # -----------------------------------------------------------------------------
 def metric_card(title, value, delta, prefix="", suffix="", is_percent=False, icon=""):
     delta_str = None
@@ -334,7 +334,7 @@ with r1c1: metric_card("总销量", int(cur_qty), delta_qty, suffix=" 杯", icon
 with r1c2: metric_card("总销售额", f"{cur_amt:,.2f}", delta_amt, prefix="¥", icon="💰")
 with r1c3: metric_card("平均杯单价", f"{cur_cup_price:.2f}", delta_price, prefix="¥", icon="🏷️")
 
-# 第二行：效率与质量 (移除关联订单率，恢复3列)
+# 第二行：效率与质量 (移除关联订单率，3列布局)
 st.subheader("🚀 日均效率 & 盈利 (Efficiency)")
 r2c1, r2c2, r2c3 = st.columns(3)
 with r2c1: metric_card("日均杯数", f"{cur_daily_qty:.1f}", delta_daily_qty, suffix=" 杯", icon="📅")
@@ -364,11 +364,17 @@ def update_chart_layout(fig):
 
 c1, c2 = st.columns(2)
 
+# 注意：图表数据源必须聚合去重
+df_chart_data = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
+if '商品类别' in df_display.columns:
+    # 尝试保留一个类别用于显示
+    cat_map = df_display.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
+    df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
+
 with c1:
     with st.container(border=True):
         st.markdown("##### 🔥 本期销量排行 (Top 10)")
-        top_sales = df_display.groupby('商品名称', as_index=False)['销售数量'].sum()
-        top_sales = top_sales.sort_values('销售数量', ascending=True).tail(10)
+        top_sales = df_chart_data.sort_values('销售数量', ascending=True).tail(10)
         
         if PLOTLY_AVAILABLE:
             fig = px.bar(
@@ -386,11 +392,11 @@ with c2:
         if uploaded_cost:
             st.markdown("##### 🏆 利润贡献排行")
             tab_cat, tab_prod = st.tabs(["📂 按类别", "☕️ 按单品"])
-            total_profit = df_display['商品毛利'].sum()
+            total_profit = df_chart_data['商品毛利'].sum()
             
             with tab_cat:
-                if '商品类别' in df_display.columns:
-                    df_cat = df_display.groupby('商品类别', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True)
+                if '商品类别' in df_chart_data.columns:
+                    df_cat = df_chart_data.groupby('商品类别', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True)
                     df_cat['商品毛利'] = df_cat['商品毛利'].round(2)
                     df_cat['贡献率'] = np.where(total_profit>0, df_cat['商品毛利']/total_profit, 0)
                     
@@ -407,7 +413,7 @@ with c2:
                 else: st.info("暂无类别数据")
 
             with tab_prod:
-                df_prod = df_display.groupby('商品名称', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True).tail(10)
+                df_prod = df_chart_data.sort_values('商品毛利', ascending=True).tail(10)
                 df_prod['商品毛利'] = df_prod['商品毛利'].round(2)
                 df_prod['贡献率'] = np.where(total_profit>0, df_prod['商品毛利']/total_profit, 0)
                 if PLOTLY_AVAILABLE:
@@ -459,7 +465,8 @@ st.markdown("---")
 if uploaded_cost:
     st.markdown("### 🧠 智能产品矩阵 (BCG)")
     
-    matrix_df = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
+    # 使用聚合后的数据
+    matrix_df = df_chart_data.copy()
     matrix_df['毛利率'] = np.where(matrix_df['销售金额']>0, matrix_df['商品毛利']/matrix_df['销售金额'], 0)
     matrix_df['日均销量'] = matrix_df['销售数量'] / days_current
     
@@ -500,27 +507,25 @@ if uploaded_cost:
             else: st.caption("暂无")
 
 # -----------------------------------------------------------------------------
-# 11. 明细表格 (新增预警逻辑)
+# 11. 明细表格 (去重，智能合并类别)
 # -----------------------------------------------------------------------------
 st.markdown("### 📄 商品明细透视")
 
-group_cols = ['商品名称']
-if '商品类别' in df_display.columns: group_cols.insert(0, '商品类别')
-
-df_view = df_display.groupby(group_cols, as_index=False).agg({
+# 聚合逻辑：按商品名称聚合 (强制去重)
+# 技巧：数值列求和，非数值列(类别)取众数(Mode)或第一个值
+df_view = df_display.groupby('商品名称', as_index=False).agg({
+    '商品类别': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知',
     '销售数量': 'sum',
     '销售金额': 'sum',
     '商品毛利': 'sum'
 })
 df_view = df_view.rename(columns={'商品毛利': '商品毛利额'})
 
-# 计算辅助列
 df_view['商品毛利率'] = np.where(df_view['销售金额']>0, (df_view['商品毛利额']/df_view['销售金额'] * 100), 0)
 total_rev = df_view['销售金额'].sum()
 df_view['商品销售占比'] = np.where(total_rev>0, (df_view['销售金额']/total_rev * 100), 0)
 
-# === 新增：健康度预警逻辑 ===
-# 如果毛利率 >= 99.9% (且销售金额>0)，通常意味着成本为0（未录入）
+# 预警逻辑
 conditions = [
     (df_view['商品毛利率'] >= 99.9), 
     (df_view['商品毛利率'] < 60),
@@ -533,8 +538,7 @@ df_view = df_view.sort_values('销售数量', ascending=False)
 df_view['序号'] = range(1, len(df_view) + 1)
 df_view = df_view.round(2)
 
-cols = ['序号', '商品名称', '健康度', '销售数量', '销售金额', '商品毛利额', '商品毛利率', '商品销售占比']
-if '商品类别' in df_view.columns: cols.insert(2, '商品类别')
+cols = ['序号', '商品名称', '健康度', '商品类别', '销售数量', '销售金额', '商品毛利额', '商品毛利率', '商品销售占比']
 
 with st.container(border=True):
     st.dataframe(
