@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
+import glob
 import math
 
 # -----------------------------------------------------------------------------
-# 1. 核心配置与 CSS 注入
+# 1. 核心配置与 CSS 注入 (UI 灵魂)
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="顿角咖啡智能数据看板",
@@ -54,112 +55,136 @@ except ImportError:
 COLOR_PALETTE = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899']
 
 # -----------------------------------------------------------------------------
-# 2. 数据处理函数
+# 2. 本地数据仓库管理系统
 # -----------------------------------------------------------------------------
-def load_data_file(file):
-    if file is None: return None
-    filename = file.name.lower()
-    if filename.endswith('.xlsx') or filename.endswith('.xls'):
-        try: return pd.read_excel(file, engine='openpyxl')
-        except: pass
-    encodings = ['utf-8', 'utf-8-sig', 'gbk', 'gb18030', 'mac_roman']
-    for enc in encodings:
-        try:
-            file.seek(0)
-            df = pd.read_csv(file, encoding=enc)
-            return df
-        except: continue
+DATA_DIR = "data_storage"
+COST_FILE_NAME = "cost_data.xlsx"
+CAT_FILE_NAME = "category_map.xlsx" # 新增：品类表也存起来
+
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+
+def save_uploaded_file(uploaded_file, file_type="sales"):
+    """
+    保存上传的文件
+    file_type: 'sales', 'cost', 'category'
+    """
+    if uploaded_file is None: return None
+    
+    if file_type == "cost":
+        file_path = os.path.join(DATA_DIR, COST_FILE_NAME)
+    elif file_type == "category":
+        file_path = os.path.join(DATA_DIR, CAT_FILE_NAME)
+    else:
+        file_path = os.path.join(DATA_DIR, uploaded_file.name)
+        
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return file_path
+
+def get_saved_sales_files():
+    files = glob.glob(os.path.join(DATA_DIR, "*"))
+    # 排除固定命名的配置表
+    exclude_files = [COST_FILE_NAME, CAT_FILE_NAME]
+    sales_files = [f for f in files if os.path.basename(f) not in exclude_files and (f.endswith('.csv') or f.endswith('.xlsx') or f.endswith('.xls'))]
+    sales_files.sort()
+    return sales_files
+
+def get_saved_config_file(file_name):
+    path = os.path.join(DATA_DIR, file_name)
+    if os.path.exists(path):
+        return path
     return None
 
-def process_sales_files(uploaded_files):
-    if not uploaded_files: return None
-    all_dfs = []
-    for file in uploaded_files:
-        df = load_data_file(file)
-        if df is not None: all_dfs.append(df)
-    if not all_dfs: return None
-    df_sales = pd.concat(all_dfs, ignore_index=True)
-    
-    if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
-    if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
+# -----------------------------------------------------------------------------
+# 3. 数据加载与清洗函数
+# -----------------------------------------------------------------------------
+def load_data_from_path(file_path):
+    if not file_path: return None
+    try:
+        if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
+            return pd.read_excel(file_path, engine='openpyxl')
+        else:
+            encodings = ['utf-8', 'utf-8-sig', 'gbk', 'gb18030']
+            for enc in encodings:
+                try: return pd.read_csv(file_path, encoding=enc)
+                except: continue
+    except Exception as e:
+        st.error(f"读取文件出错 {file_path}: {e}")
+    return None
 
+def process_sales_dataframe(df_sales):
+    if df_sales is None: return None
     column_mapping = {'商品实收': '销售金额', '商品销量': '销售数量'}
     df_sales = df_sales.rename(columns=column_mapping)
-    
-    # 转换数值列
-    for col in ['销售金额', '销售数量']:
+    if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
+    if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
+    numeric_cols = ['销售金额', '销售数量']
+    for col in numeric_cols:
         if col in df_sales.columns:
             df_sales[col] = pd.to_numeric(
                 df_sales[col].astype(str).str.replace(r'[¥$,￥]', '', regex=True), 
                 errors='coerce'
             ).fillna(0)
-            
     return df_sales
 
-# === 新增：处理分类归纳表 ===
-def merge_category_map(df_sales, category_file):
+# === 关键修复：分类映射去重 ===
+def merge_category_map(df_sales, df_cat):
     """
     读取分类映射表，并将其合并到销售数据中。
-    映射表结构：一级分类, 二级分类
     """
     if df_sales is None: return None
-    if category_file is not None:
-        df_cat = load_data_file(category_file)
-        if df_cat is not None:
-            # 1. 填充空值 (Excel合并单元格处理)
-            df_cat.iloc[:, 0] = df_cat.iloc[:, 0].ffill() # 填充一级分类
-            
-            # 2. 规范列名
-            # 假设第一列是一级，第二列是二级 (对应销售表中的商品类别)
-            if len(df_cat.columns) >= 2:
-                df_cat = df_cat.iloc[:, :2] # 只取前两列
-                df_cat.columns = ['一级分类', '二级分类']
-                
-                # 去除可能的空白字符
-                df_cat['一级分类'] = df_cat['一级分类'].astype(str).str.strip()
-                df_cat['二级分类'] = df_cat['二级分类'].astype(str).str.strip()
-                
-                # 3. 合并到销售表
-                # 销售表中的 '商品类别' 对应 映射表的 '二级分类'
-                if '商品类别' in df_sales.columns:
-                    df_sales['商品类别'] = df_sales['商品类别'].astype(str).str.strip()
-                    # Left join 保证销售数据不丢失
-                    df_sales = pd.merge(df_sales, df_cat, left_on='商品类别', right_on='二级分类', how='left')
-                    
-                    # 填充未匹配到的分类
-                    df_sales['一级分类'] = df_sales['一级分类'].fillna('未分类')
-                    df_sales['二级分类'] = df_sales['二级分类'].fillna(df_sales['商品类别'])
-                else:
-                    st.warning("⚠️ 销售数据中缺少 '商品类别' 列，无法进行分类映射。")
     
-    # 即使没上传分类表，也要保证列存在，以免后续报错
+    # 默认值
     if '一级分类' not in df_sales.columns:
         df_sales['一级分类'] = df_sales['商品类别'] if '商品类别' in df_sales.columns else '未分类'
     if '二级分类' not in df_sales.columns:
         df_sales['二级分类'] = df_sales['商品类别'] if '商品类别' in df_sales.columns else '未分类'
+
+    if df_cat is not None:
+        # 1. 填充空值 (Excel合并单元格处理)
+        df_cat.iloc[:, 0] = df_cat.iloc[:, 0].ffill() 
         
+        # 2. 规范列名
+        if len(df_cat.columns) >= 2:
+            df_cat = df_cat.iloc[:, :2] # 只取前两列
+            df_cat.columns = ['一级分类_map', '二级分类_map']
+            
+            # 清洗字符串
+            df_cat['一级分类_map'] = df_cat['一级分类_map'].astype(str).str.strip()
+            df_cat['二级分类_map'] = df_cat['二级分类_map'].astype(str).str.strip()
+            
+            # === 🔥 关键修复：去重！防止多对多合并导致数据翻倍 ===
+            df_cat = df_cat.drop_duplicates(subset=['二级分类_map'])
+            
+            # 3. 合并到销售表
+            if '商品类别' in df_sales.columns:
+                df_sales['商品类别'] = df_sales['商品类别'].astype(str).str.strip()
+                
+                # 合并
+                df_sales = pd.merge(df_sales, df_cat, left_on='商品类别', right_on='二级分类_map', how='left')
+                
+                # 4. 更新分类列 (优先使用映射表，没有则用原类别)
+                df_sales['一级分类'] = df_sales['一级分类_map'].fillna('未分类')
+                df_sales['二级分类'] = df_sales['二级分类_map'].fillna(df_sales['商品类别'])
+                
+                # 清理临时列
+                df_sales = df_sales.drop(columns=['一级分类_map', '二级分类_map'])
+                
     return df_sales
 
-def merge_cost_data(df_sales, cost_file):
+def merge_cost_data(df_sales, df_cost):
     if df_sales is None: return None
-    if cost_file is not None:
-        df_cost = load_data_file(cost_file)
-        if df_cost is not None:
-            if '产品' in df_cost.columns: df_cost = df_cost.rename(columns={'产品': '商品名称'})
-            if '成本' in df_cost.columns:
-                df_cost['成本'] = pd.to_numeric(df_cost['成本'], errors='coerce').fillna(0)
-                # 去重成本表
-                if df_cost['商品名称'].duplicated().any():
-                    df_cost = df_cost.groupby('商品名称', as_index=False)['成本'].mean()
-                
-                df_sales = pd.merge(df_sales, df_cost[['商品名称', '成本']], on='商品名称', how='left')
-                df_sales['成本'] = df_sales['成本'].fillna(0)
-                df_sales['商品毛利'] = df_sales['销售金额'] - (df_sales['销售数量'] * df_sales['成本'])
-            else:
-                st.warning("⚠️ 成本档案缺少 '成本' 列")
-                df_sales['商品毛利'] = 0
+    if df_cost is not None:
+        if '产品' in df_cost.columns: df_cost = df_cost.rename(columns={'产品': '商品名称'})
+        if '成本' in df_cost.columns:
+            df_cost['成本'] = pd.to_numeric(df_cost['成本'], errors='coerce').fillna(0)
+            if df_cost['商品名称'].duplicated().any():
+                df_cost = df_cost.groupby('商品名称', as_index=False)['成本'].mean()
+            df_sales = pd.merge(df_sales, df_cost[['商品名称', '成本']], on='商品名称', how='left')
+            df_sales['成本'] = df_sales['成本'].fillna(0)
+            df_sales['商品毛利'] = df_sales['销售金额'] - (df_sales['销售数量'] * df_sales['成本'])
         else:
-            st.warning("⚠️ 成本档案读取失败")
             df_sales['商品毛利'] = 0
     else:
         df_sales['商品毛利'] = 0; df_sales['成本'] = 0
@@ -177,50 +202,110 @@ def calculate_metrics(df, operate_days):
     return qty, amt, profit, cup_price, margin, daily_qty, daily_amt
 
 # -----------------------------------------------------------------------------
-# 3. 侧边栏布局
+# 4. 侧边栏布局
 # -----------------------------------------------------------------------------
 logo_path = "logo.png"
-if os.path.exists(logo_path):
-    st.sidebar.image(logo_path, width=120)
-else:
-    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/751/751621.png", width=100)
+if os.path.exists(logo_path): st.sidebar.image(logo_path, width=120)
+else: st.sidebar.image("https://cdn-icons-png.flaticon.com/512/751/751621.png", width=100)
 
 st.sidebar.markdown("## 顿角咖啡智能数据看板")
 st.sidebar.caption("Dunjiao Coffee · Intelligent BI System")
 
-with st.sidebar.expander("📂 数据源配置", expanded=True):
-    uploaded_sales_files = st.file_uploader("1. 上传销售数据 (多选)", type=["csv", "xlsx"], accept_multiple_files=True)
-    uploaded_cost = st.file_uploader("2. 上传成本档案", type=["csv", "xlsx"])
-    # 新增分类表上传
-    uploaded_category = st.file_uploader("3. 上传品类归纳表 (可选)", type=["csv", "xlsx"], help="含'一级分类'和'二级分类'列")
-
-# -----------------------------------------------------------------------------
-# 4. 数据加载与处理
-# -----------------------------------------------------------------------------
-df_final = None
-if uploaded_sales_files:
-    df_sales_merged = process_sales_files(uploaded_sales_files)
-    df_with_cost = merge_cost_data(df_sales_merged, uploaded_cost)
-    # 合并分类映射
-    df_final = merge_category_map(df_with_cost, uploaded_category)
+# === 💾 数据仓库管理模块 ===
+with st.sidebar.expander("💾 数据仓库管理", expanded=True):
+    # 1. 成本表
+    st.markdown("**💰 成本档案**")
+    saved_cost_path = get_saved_config_file(COST_FILE_NAME)
+    if saved_cost_path:
+        st.success("✅ 已有存档")
+        if st.checkbox("更新成本表?"):
+            new_cost = st.file_uploader("上传新成本表", type=["xlsx", "csv"])
+            if new_cost:
+                save_uploaded_file(new_cost, "cost")
+                st.rerun()
+    else:
+        st.warning("⚠️ 暂无")
+        new_cost = st.file_uploader("请上传成本表", type=["xlsx", "csv"])
+        if new_cost:
+            save_uploaded_file(new_cost, "cost")
+            st.rerun()
+            
+    st.divider()
     
-    if df_final is not None:
-        st.sidebar.success(f"✅ 数据加载完成")
+    # 2. 品类表 (新增)
+    st.markdown("**🏷️ 品类归纳表**")
+    saved_cat_path = get_saved_config_file(CAT_FILE_NAME)
+    if saved_cat_path:
+        st.success("✅ 已有存档")
+        if st.checkbox("更新品类表?"):
+            new_cat = st.file_uploader("上传一级/二级分类表", type=["xlsx", "csv"])
+            if new_cat:
+                save_uploaded_file(new_cat, "category")
+                st.rerun()
+    else:
+        st.warning("⚠️ 暂无")
+        new_cat = st.file_uploader("请上传品类表", type=["xlsx", "csv"])
+        if new_cat:
+            save_uploaded_file(new_cat, "category")
+            st.rerun()
+
+    st.divider()
+
+    # 3. 销售数据
+    st.markdown("**📤 上传销售数据**")
+    new_sales = st.file_uploader("支持多选上传", type=["xlsx", "csv"], accept_multiple_files=True)
+    if new_sales:
+        for f in new_sales:
+            save_uploaded_file(f, "sales")
+        st.success(f"成功存入 {len(new_sales)} 个文件!")
+        st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 选择分析数据")
+saved_sales_files = get_saved_sales_files()
+
+if not saved_sales_files:
+    st.sidebar.warning("仓库为空，请先在上方上传数据。")
+    df_final = None
 else:
-    st.markdown("""
-    <div style="text-align: center; padding: 40px;">
-        <h1 style="font-size: 42px; color: #1E293B;">👋 欢迎使用顿角咖啡智能数据看板</h1>
-        <p style="color: #64748B; font-size: 18px;">专为顿角咖啡打造的智能经营分析平台</p>
-    </div>
-    """, unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c2:
-        if os.path.exists(logo_path): st.image(logo_path, use_container_width=True)
-        else: st.image("https://cdn-icons-png.flaticon.com/512/2935/2935413.png", use_container_width=True, caption="Dunjiao Coffee Analytics")
+    file_names = [os.path.basename(f) for f in saved_sales_files]
+    selected_files = st.sidebar.multiselect("请勾选要分析的历史文件", file_names, default=file_names, placeholder="请选择")
+    
+    if selected_files:
+        all_dfs = []
+        for fname in selected_files:
+            fpath = os.path.join(DATA_DIR, fname)
+            df = load_data_from_path(fpath)
+            if df is not None:
+                df = process_sales_dataframe(df)
+                all_dfs.append(df)
+        
+        if all_dfs:
+            df_sales_merged = pd.concat(all_dfs, ignore_index=True)
+            
+            # 加载成本表
+            df_cost = None
+            if saved_cost_path:
+                df_cost = load_data_from_path(saved_cost_path)
+            df_sales_merged = merge_cost_data(df_sales_merged, df_cost)
+            
+            # 加载品类表
+            df_cat_map = None
+            if saved_cat_path:
+                df_cat_map = load_data_from_path(saved_cat_path)
+            df_final = merge_category_map(df_sales_merged, df_cat_map)
+            
+            st.sidebar.success(f"已加载 {len(selected_files)} 个周期数据")
+        else: df_final = None
+    else: df_final = None
+
+if df_final is None:
+    st.image("https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=1200&h=250&q=80", use_container_width=True)
+    st.markdown("<div style='text-align:center;padding:40px;'><h1>👋 欢迎回来</h1><p>请在左侧 <b>“数据仓库管理”</b> 中上传或勾选数据。</p></div>", unsafe_allow_html=True)
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 5. 筛选与逻辑 (含多级分类筛选)
+# 5. 核心逻辑
 # -----------------------------------------------------------------------------
 if '统计周期' in df_final.columns:
     available_periods = sorted(list(df_final['统计周期'].dropna().unique()))
@@ -240,24 +325,20 @@ with st.sidebar.expander("🛠️ 筛选与参数", expanded=True):
     # 1. 门店筛选
     selected_stores = st.multiselect("门店筛选", all_stores, placeholder="默认全选")
     
-    # 2. 品类筛选 (级联)
+    # 2. 品类筛选
     st.markdown("##### 🏷️ 品类筛选")
-    
-    # 获取一级分类列表 (处理 nan 和 非字符串)
     all_l1_cats = sorted([str(x) for x in df_final['一级分类'].dropna().unique()])
     selected_l1 = st.multiselect("一级分类", all_l1_cats, placeholder="默认全选")
     
-    # 根据一级分类过滤二级分类
     if selected_l1:
         available_l2 = sorted([str(x) for x in df_final[df_final['一级分类'].isin(selected_l1)]['二级分类'].dropna().unique()])
     else:
         available_l2 = sorted([str(x) for x in df_final['二级分类'].dropna().unique()])
-        
     selected_l2 = st.multiselect("二级分类", available_l2, placeholder="默认全选")
     
     st.divider()
 
-    # 3. 周期与环比
+    # 3. 周期
     if len(available_periods) >= 2:
         enable_comparison = st.checkbox("开启环比分析", value=True)
         if enable_comparison:
@@ -265,12 +346,10 @@ with st.sidebar.expander("🛠️ 筛选与参数", expanded=True):
             p_current = st.selectbox("本期", available_periods, index=len(available_periods)-1)
             remaining_periods = [p for p in available_periods if p != p_current]
             p_previous = st.selectbox("上期 (对比)", remaining_periods, index=len(remaining_periods)-1 if remaining_periods else 0)
-            
             st.caption("⏱️ 营业天数设置")
             c1_day, c2_day = st.columns(2)
             days_current = c1_day.number_input("本期天数", 1, 31, 5)
             days_previous = c2_day.number_input("上期天数", 1, 31, 5)
-            
             df_current = df_final[df_final['统计周期'] == p_current].copy()
             df_previous = df_final[df_final['统计周期'] == p_previous].copy()
         else:
@@ -281,22 +360,17 @@ with st.sidebar.expander("🛠️ 筛选与参数", expanded=True):
         days_current = st.number_input("营业天数", 1, 31, 5)
         df_current = df_final.copy()
 
-# === 执行筛选 ===
-# 1. 门店
+# 执行筛选
 if selected_stores:
     if not df_current.empty: df_current = df_current[df_current['门店名称'].isin(selected_stores)]
     if not df_previous.empty: df_previous = df_previous[df_previous['门店名称'].isin(selected_stores)]
-
-# 2. 品类
 if selected_l1:
     if not df_current.empty: df_current = df_current[df_current['一级分类'].isin(selected_l1)]
     if not df_previous.empty: df_previous = df_previous[df_previous['一级分类'].isin(selected_l1)]
-
 if selected_l2:
     if not df_current.empty: df_current = df_current[df_current['二级分类'].isin(selected_l2)]
     if not df_previous.empty: df_previous = df_previous[df_previous['二级分类'].isin(selected_l2)]
 
-# 计算 KPI
 cur_qty, cur_amt, cur_profit, cur_cup_price, cur_margin, cur_daily_qty, cur_daily_amt = calculate_metrics(df_current, days_current)
 
 if is_comparison_mode and not df_previous.empty:
@@ -310,15 +384,10 @@ if is_comparison_mode and not df_previous.empty:
 else:
     delta_qty = delta_amt = delta_price = delta_margin = delta_daily_qty = delta_daily_amt = None
 
-# === 搜索框 (包含全部筛选后的商品) ===
+# 新品搜索
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 新品/组合搜索")
-
-all_products_list = []
-if not df_current.empty:
-    # 修复：先转为字符串再排序，防止 TypeError
-    all_products_list = sorted([str(x) for x in df_current['商品名称'].unique().tolist()])
-
+all_products_list = sorted([str(x) for x in df_current['商品名称'].unique().tolist()]) if not df_current.empty else []
 search_products = st.sidebar.multiselect("选择商品名称", all_products_list, placeholder="可多选")
 
 # -----------------------------------------------------------------------------
@@ -332,10 +401,6 @@ with c_period:
         st.markdown(f"<div style='text-align:right; padding-top:10px; color:#64748B;'><b>分析周期</b><br><span style='color:#3B82F6; font-size:1.1em'>{p_current}</span> vs <span style='color:#94A3B8'>{p_previous}</span></div>", unsafe_allow_html=True)
 st.markdown("---")
 
-if df_current.empty:
-    st.warning("⚠️ 当前筛选结果为空。")
-    st.stop()
-
 def update_chart_layout(fig):
     fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font_family="Inter", font_color="#4B5563", margin=dict(l=20, r=20, t=40, b=20))
     return fig
@@ -347,7 +412,6 @@ if search_products:
     
     prod_curr = df_current[df_current['商品名称'].isin(search_products)]
     prod_prev = df_previous[df_previous['商品名称'].isin(search_products)] if not df_previous.empty else pd.DataFrame()
-    
     p_qty, p_amt, p_profit, p_cup_price, p_margin, p_daily_qty, p_daily_amt = calculate_metrics(prod_curr, days_current)
     total_sales_all = df_current['销售金额'].sum()
     sales_contribution = (p_amt / total_sales_all) if total_sales_all > 0 else 0
@@ -370,10 +434,9 @@ if search_products:
 
         prod_card(col_p1, "组合销量", f"{int(p_qty)} 杯", p_delta_qty, sub_text=f"📅 日均销量：{p_daily_qty:.1f} 杯")
         prod_card(col_p2, "组合营收", f"¥{p_amt:,.2f}", p_delta_amt, sub_text=rank_str)
-        if uploaded_cost:
+        if saved_cost_path:
             prod_card(col_p3, "综合毛利率", f"{p_margin:.2f}%", p_delta_margin, sub_text="💰 组合盈利能力")
         else: col_p3.metric("毛利率", "--")
-            
         avg_margin_all = (df_current['商品毛利'].sum() / df_current['销售金额'].sum()) if df_current['销售金额'].sum() > 0 else 0
         my_margin = p_margin / 100
         tag = "💎 高利组合" if my_margin >= avg_margin_all else "📦 走量组合"
@@ -386,7 +449,6 @@ if search_products:
     prod_store_df = prod_curr.groupby('门店名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
     prod_store_df = prod_store_df.sort_values('销售数量', ascending=True) 
     prod_store_df['销售数量'] = prod_store_df['销售数量'].round(2)
-    
     if not prod_store_df.empty:
         with st.container(border=True):
             if PLOTLY_AVAILABLE:
@@ -421,7 +483,7 @@ r2c1, r2c2, r2c3 = st.columns(3)
 with r2c1: metric_card("日均杯数", f"{cur_daily_qty:.1f}", delta_daily_qty, suffix=" 杯", icon="📅")
 with r2c2: metric_card("日均营收", f"{cur_daily_amt:,.2f}", delta_daily_amt, prefix="¥", icon="💳")
 with r2c3:
-    if uploaded_cost:
+    if saved_cost_path:
         metric_card("平均毛利率", f"{cur_margin:.2f}", delta_margin, suffix="%", is_percent=True, icon="📈")
     else:
         with st.container(border=True): st.metric("📈 平均毛利率", "--")
@@ -430,23 +492,8 @@ st.markdown("---")
 
 # --- 图表区域 ---
 df_display = df_current.copy()
-
 # 聚合去重：按商品名称聚合
 df_chart_data = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
-
-# 尝试合并回类别 (取众数) 用于分组显示，如果有分类表，这里可以优先使用一级或二级分类
-if '二级分类' in df_display.columns:
-    cat_col = '二级分类' 
-elif '一级分类' in df_display.columns:
-    cat_col = '一级分类'
-elif '商品类别' in df_display.columns:
-    cat_col = '商品类别'
-else:
-    cat_col = None
-
-if cat_col:
-    cat_map = df_display.groupby('商品名称')[cat_col].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
-    df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
 
 c1, c2 = st.columns(2)
 with c1:
@@ -463,12 +510,11 @@ with c1:
 
 with c2:
     with st.container(border=True):
-        if uploaded_cost:
+        if saved_cost_path:
             st.markdown("##### 🏆 利润贡献排行")
             tab_cat, tab_prod = st.tabs(["📂 按分类", "☕️ 按单品"])
             total_profit = df_chart_data['商品毛利'].sum()
             with tab_cat:
-                # 使用一级分类聚合展示利润
                 if '一级分类' in df_display.columns:
                     df_cat = df_display.groupby('一级分类', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True)
                     df_cat['商品毛利'] = df_cat['商品毛利'].round(2)
@@ -479,7 +525,7 @@ with c2:
                         fig_cat.update_layout(coloraxis_showscale=False)
                         fig_cat = update_chart_layout(fig_cat)
                         st.plotly_chart(fig_cat, use_container_width=True)
-                else: st.info("请上传品类归纳表以查看类别分析")
+                else: st.info("请上传品类归纳表")
             with tab_prod:
                 df_prod = df_chart_data.sort_values('商品毛利', ascending=True).tail(10)
                 df_prod['商品毛利'] = df_prod['商品毛利'].round(2)
@@ -572,7 +618,7 @@ if is_comparison_mode and '一级分类' in df_current.columns:
     else: st.info("当前无门店数据。")
 
 # --- BCG 矩阵 ---
-if uploaded_cost:
+if saved_cost_path:
     st.markdown("### 🧠 智能产品矩阵 (BCG)")
     matrix_df = df_chart_data.copy()
     matrix_df['毛利率'] = np.where(matrix_df['销售金额']>0, matrix_df['商品毛利']/matrix_df['销售金额'], 0)
@@ -608,7 +654,6 @@ if uploaded_cost:
 st.markdown("### 📄 商品明细透视")
 # 聚合逻辑：按商品名称聚合 (强制去重)
 agg_dict = {'销售数量': 'sum', '销售金额': 'sum', '商品毛利': 'sum'}
-# 如果有分类字段，使用众数或第一个值填充，避免 group 丢失
 if '一级分类' in df_display.columns:
     agg_dict['一级分类'] = lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知'
 if '二级分类' in df_display.columns:
