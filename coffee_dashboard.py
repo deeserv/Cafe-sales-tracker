@@ -316,13 +316,12 @@ else:
 # === 🌟 核心升级：新品/组合多选搜索 ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 新品/组合搜索")
-st.sidebar.caption("选择多个产品以查看组合表现")
+st.sidebar.caption("选择多个产品可查看组合表现及门店对比")
 
 all_products_list = []
 if not df_current.empty:
     all_products_list = sorted(df_current['商品名称'].unique().tolist())
 
-# Multiselect 支持多选
 search_products = st.sidebar.multiselect("选择商品名称", all_products_list, placeholder="可多选，例如：生椰拿铁、厚椰拿铁")
 
 # -----------------------------------------------------------------------------
@@ -384,7 +383,7 @@ if search_products:
         
         def prod_card(col, label, val, delta=None, sub_text=""):
             d_str = f"{delta:+.1%}" if delta is not None else None
-            if label == "毛利率" and delta is not None: d_str = f"{delta:+.1f} pts"
+            if label == "综合毛利率" and delta is not None: d_str = f"{delta:+.1f} pts"
             col.metric(label, val, d_str, delta_color="inverse")
             if sub_text: col.caption(sub_text)
 
@@ -416,13 +415,20 @@ if search_products:
         with st.container(border=True):
             if PLOTLY_AVAILABLE:
                 fig_store = px.bar(
-                    prod_store_df, y='门店名称', x='销售数量', orientation='h',
-                    text='销售数量', color='销售数量', color_continuous_scale='Blues',
+                    prod_store_df, 
+                    y='门店名称', 
+                    x='销售数量', 
+                    orientation='h',
+                    text='销售数量',
+                    color='销售数量',
+                    color_continuous_scale='Blues',
                     hover_data={'销售数量':True, '销售金额':':.2f', '商品毛利':':.2f'},
                     title=f"各门店【{', '.join(search_products)[:20]}...】合计销量"
                 )
                 fig_store.update_traces(textposition='outside')
-                fig_store.update_layout(coloraxis_showscale=False, height=400 + (len(prod_store_df)*10))
+                # 动态高度设置：每家店40像素 + 基础高度
+                fig_height = max(400, len(prod_store_df) * 40)
+                fig_store.update_layout(coloraxis_showscale=False, height=fig_height)
                 fig_store = update_chart_layout(fig_store)
                 st.plotly_chart(fig_store, use_container_width=True)
             else:
@@ -565,15 +571,16 @@ if is_comparison_mode and '商品类别' in df_current.columns:
             st.plotly_chart(fig_diff, use_container_width=True)
         else: st.bar_chart(cat_diff.set_index('商品类别')['日均杯数变动'])
 
+st.markdown("---")
+
 # -----------------------------------------------------------------------------
-# 9.5 [新增] 门店品类涨跌雷达 (热力矩阵)
+# 9.5 [新增/修复] 门店品类涨跌雷达 (UI 优化版)
 # -----------------------------------------------------------------------------
 if is_comparison_mode and '商品类别' in df_current.columns:
     st.markdown("### 🏪 门店品类涨跌雷达 (日均杯数变动)")
-    st.caption("透视各门店不同品类的业绩变化，颜色越红增长越多，越绿下滑越严重。")
+    st.caption("颜色越红增长越多，越绿下滑越严重（鼠标悬停查看数值）。")
     
     # Data Prep
-    # 1. Group by Store & Category
     store_cat_curr = df_current.groupby(['门店名称', '商品类别'], as_index=False)['销售数量'].sum()
     store_cat_curr['日均'] = store_cat_curr['销售数量'] / days_current
     
@@ -583,37 +590,38 @@ if is_comparison_mode and '商品类别' in df_current.columns:
     else:
         store_cat_prev = pd.DataFrame(columns=['门店名称', '商品类别', '日均'])
         
-    # 2. Merge
     merged_sc = pd.merge(store_cat_curr, store_cat_prev, on=['门店名称', '商品类别'], suffixes=('_curr', '_prev'), how='outer').fillna(0)
     merged_sc['变动'] = merged_sc['日均_curr'] - merged_sc['日均_prev']
     
-    # 3. Pivot for Heatmap
     heatmap_data = merged_sc.pivot(index='门店名称', columns='商品类别', values='变动').fillna(0)
     
-    # 4. Plot
+    # 动态高度计算
+    n_stores = len(heatmap_data)
+    fig_height = max(400, n_stores * 40)
+    
     with st.container(border=True):
         if PLOTLY_AVAILABLE:
             fig_hm = go.Figure(data=go.Heatmap(
                 z=heatmap_data.values,
                 x=heatmap_data.columns,
                 y=heatmap_data.index,
-                colorscale=[[0, '#10B981'], [0.5, '#FFFFFF'], [1, '#EF4444']], # Green -> White -> Red
-                zmid=0, # Center color scale at 0
-                texttemplate="%{z:+.1f}",
-                textfont={"size": 10},
-                hoverongaps=False
+                colorscale=[[0, '#10B981'], [0.5, '#FFFFFF'], [1, '#EF4444']], 
+                zmid=0,
+                # 移除格子内文字，只保留悬停
+                hovertemplate="门店: %{y}<br>品类: %{x}<br>日均变化: %{z:+.2f}杯<extra></extra>", 
+                xgap=1, ygap=1
             ))
             fig_hm.update_layout(
-                title="门店-品类 涨跌热力图 (日均杯数)",
-                xaxis_title="品类",
-                yaxis_title="门店",
-                height=600
+                xaxis_title="",
+                yaxis_title="",
+                height=fig_height,
+                xaxis={'side': 'top'},
             )
             fig_hm = update_chart_layout(fig_hm)
             st.plotly_chart(fig_hm, use_container_width=True)
     
-    # 5. Top Movers Text
-    st.markdown("#### 🚀 涨跌榜单")
+    # 涨跌榜单
+    st.markdown("#### 🚀 涨跌榜单 Top 5")
     c_rise, c_fall = st.columns(2)
     
     merged_sc = merged_sc.sort_values('变动', ascending=False)
@@ -622,23 +630,15 @@ if is_comparison_mode and '商品类别' in df_current.columns:
     
     with c_rise:
         with st.container(border=True):
-            st.markdown("##### 🏆 增长最快 (日均)")
+            st.markdown("##### 🏆 增长最快")
             for _, row in top_risers.iterrows():
-                if row['变动'] > 0:
-                    st.markdown(f"**{row['门店名称']} - {row['商品类别']}**: :red[+{row['变动']:.2f} 杯]")
-                else:
-                    st.caption("无增长")
-                    break
+                if row['变动'] > 0: st.markdown(f"**{row['门店名称']} - {row['商品类别']}**: :red[+{row['变动']:.2f} 杯]")
     
     with c_fall:
         with st.container(border=True):
-            st.markdown("##### ⚠️ 下滑最快 (日均)")
+            st.markdown("##### ⚠️ 下滑最快")
             for _, row in top_fallers.iterrows():
-                if row['变动'] < 0:
-                    st.markdown(f"**{row['门店名称']} - {row['商品类别']}**: :green[{row['变动']:.2f} 杯]")
-                else:
-                    st.caption("无下滑")
-                    break
+                if row['变动'] < 0: st.markdown(f"**{row['门店名称']} - {row['商品类别']}**: :green[{row['变动']:.2f} 杯]")
 
 st.markdown("---")
 
