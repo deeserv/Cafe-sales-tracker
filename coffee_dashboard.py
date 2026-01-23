@@ -191,13 +191,17 @@ def merge_cost_data(df_sales, cost_file):
 
 def calculate_metrics(df, operate_days):
     if df.empty or operate_days <= 0: return 0, 0, 0, 0, 0, 0, 0
+    
     qty = df['销售数量'].sum()
     amt = df['销售金额'].sum()
     profit = df['商品毛利'].sum()
+    
     cup_price = (amt / qty) if qty > 0 else 0 
     margin = (profit / amt * 100) if amt > 0 else 0
+    
     daily_qty = qty / operate_days
     daily_amt = amt / operate_days
+    
     return qty, amt, profit, cup_price, margin, daily_qty, daily_amt
 
 # -----------------------------------------------------------------------------
@@ -397,6 +401,9 @@ if search_products:
     prod_store_df = prod_curr.groupby('门店名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
     prod_store_df = prod_store_df.sort_values('销售数量', ascending=True) 
     
+    # === 关键修复：强制保留2位小数 ===
+    prod_store_df['销售数量'] = prod_store_df['销售数量'].round(2)
+    
     if not prod_store_df.empty:
         with st.container(border=True):
             if PLOTLY_AVAILABLE:
@@ -408,10 +415,9 @@ if search_products:
                     text='销售数量',
                     color='销售数量',
                     color_continuous_scale='Blues',
-                    hover_data={'销售数量':True, '销售金额':':.2f', '商品毛利':':.2f'},
+                    hover_data={'销售数量':':.2f', '销售金额':':.2f', '商品毛利':':.2f'},
                     title=f"各门店【{', '.join(search_products)[:20]}...】合计销量"
                 )
-                # === 修复：柱状图数字强制保留2位小数 ===
                 fig_store.update_traces(textposition='outside', texttemplate='%{text:,.2f}') 
                 fig_height = max(400, len(prod_store_df) * 40)
                 fig_store.update_layout(coloraxis_showscale=False, height=fig_height)
@@ -458,10 +464,13 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 # 8. 图表区域
 # -----------------------------------------------------------------------------
+# 确保定义 df_display
 df_display = df_current.copy()
 
 # 聚合去重
 df_chart_data = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
+
+# 尝试合并回类别 (取众数) 用于染色
 if '商品类别' in df_display.columns:
     cat_map = df_display.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
     df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
@@ -473,6 +482,9 @@ with c1:
         st.markdown("##### 🔥 本期销量排行 (Top 10)")
         top_sales = df_chart_data.sort_values('销售数量', ascending=True).tail(10)
         
+        # === 关键修复：强制保留2位小数 ===
+        top_sales['销售数量'] = top_sales['销售数量'].round(2)
+
         if PLOTLY_AVAILABLE:
             fig = px.bar(
                 top_sales, y='商品名称', x='销售数量', orientation='h', text='销售数量',
@@ -542,6 +554,7 @@ if is_comparison_mode and '商品类别' in df_current.columns:
     
     cat_diff = pd.merge(cat_curr, cat_prev, on='商品类别', suffixes=('_curr', '_prev'), how='outer').fillna(0)
     cat_diff['日均杯数变动'] = cat_diff['日均杯数_curr'] - cat_diff['日均杯数_prev']
+    # === 修复：数据源强制保留2位小数 ===
     cat_diff['日均杯数变动'] = cat_diff['日均杯数变动'].round(2)
     cat_diff = cat_diff.sort_values('日均杯数变动', ascending=True)
     cat_diff['颜色'] = np.where(cat_diff['日均杯数变动'] >= 0, '#EF4444', '#10B981')
@@ -549,7 +562,7 @@ if is_comparison_mode and '商品类别' in df_current.columns:
     with st.container(border=True):
         if PLOTLY_AVAILABLE:
             fig_diff = px.bar(cat_diff, y='商品类别', x='日均杯数变动', text='日均杯数变动', orientation='h', title="品类日均杯数净增长/减少 (杯)")
-            # === 修复：瀑布图数字强制保留2位小数 ===
+            # === 修复：数字格式化 ===
             fig_diff.update_traces(marker_color=cat_diff['颜色'], texttemplate='%{text:+.2f}杯')
             fig_diff.update_layout(yaxis={'categoryorder':'total ascending'})
             fig_diff = update_chart_layout(fig_diff)
@@ -592,6 +605,8 @@ if is_comparison_mode and '商品类别' in df_current.columns:
             
         sc_merge = pd.merge(sc_curr, sc_prev, on='商品类别', suffixes=('_curr', '_prev'), how='outer').fillna(0)
         sc_merge['变动'] = sc_merge['日均_curr'] - sc_merge['日均_prev']
+        # === 修复：数据源强制保留2位小数 ===
+        sc_merge['变动'] = sc_merge['变动'].round(2)
         sc_merge = sc_merge.sort_values('变动', ascending=True) 
         
         with st.container(border=True):
@@ -639,6 +654,7 @@ st.markdown("---")
 if uploaded_cost:
     st.markdown("### 🧠 智能产品矩阵 (BCG)")
     
+    # 使用聚合后的数据 (df_chart_data 已经按名称去重)
     matrix_df = df_chart_data.copy()
     matrix_df['毛利率'] = np.where(matrix_df['销售金额']>0, matrix_df['商品毛利']/matrix_df['销售金额'], 0)
     matrix_df['日均销量'] = matrix_df['销售数量'] / days_current
@@ -684,6 +700,7 @@ if uploaded_cost:
 # -----------------------------------------------------------------------------
 st.markdown("### 📄 商品明细透视")
 
+# 聚合逻辑：按商品名称聚合 (强制去重)
 df_view = df_display.groupby('商品名称', as_index=False).agg({
     '商品类别': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知',
     '销售数量': 'sum',
