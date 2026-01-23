@@ -94,6 +94,12 @@ st.markdown("""
         background-color: #EFF6FF;
         color: #2563EB;
     }
+    
+    /* 多选框高亮 */
+    div[data-testid="stMultiSelect"] label {
+        font-weight: bold;
+        color: #2563EB;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -148,14 +154,9 @@ def process_sales_files(uploaded_files):
     if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
     if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
 
-    # 映射列名
-    column_mapping = {
-        '商品实收': '销售金额',
-        '商品销量': '销售数量'
-    }
+    column_mapping = {'商品实收': '销售金额', '商品销量': '销售数量'}
     df_sales = df_sales.rename(columns=column_mapping)
 
-    # 确保数值列是数字类型
     numeric_cols = ['销售金额', '销售数量']
     for col in numeric_cols:
         if col in df_sales.columns:
@@ -195,7 +196,6 @@ def calculate_metrics(df, operate_days):
     amt = df['销售金额'].sum()
     profit = df['商品毛利'].sum()
     
-    # 衍生指标
     cup_price = (amt / qty) if qty > 0 else 0 
     margin = (profit / amt * 100) if amt > 0 else 0
     
@@ -309,16 +309,17 @@ if is_comparison_mode and not df_previous.empty:
 else:
     delta_qty = delta_amt = delta_price = delta_margin = delta_daily_qty = delta_daily_amt = None
 
-# === 🌟 新增功能：新品/单品搜索 (放在筛选下方) ===
+# === 🌟 核心升级：新品/单品多选搜索 ===
 st.sidebar.markdown("---")
-st.sidebar.subheader("🔍 新品/单品搜索")
-st.sidebar.caption("选择产品以查看各门店表现")
+st.sidebar.subheader("🔍 新品/组合搜索 (支持多选)")
+st.sidebar.caption("选择多个产品可查看【系列/组合】表现")
 
 all_products_list = []
 if not df_current.empty:
     all_products_list = sorted(df_current['商品名称'].unique().tolist())
 
-search_product = st.sidebar.selectbox("选择或输入商品名称", ["(未选择)"] + all_products_list)
+# 【升级】改为 multiselect 支持多选
+search_products = st.sidebar.multiselect("选择商品名称", all_products_list, placeholder="请选择一个或多个商品")
 
 # -----------------------------------------------------------------------------
 # 6. 主界面
@@ -348,29 +349,28 @@ def update_chart_layout(fig):
     return fig
 
 # -----------------------------------------------------------------------------
-# 🎯 单品透视卡片 (搜索联动)
+# 🎯 产品/组合透视卡片 (支持多选)
 # -----------------------------------------------------------------------------
-if search_product != "(未选择)":
-    st.markdown(f"### 🎯 单品透视：<span style='color:#2563EB'>{search_product}</span>", unsafe_allow_html=True)
+if search_products:
+    if len(search_products) == 1:
+        title_text = f"🎯 单品透视：<span style='color:#2563EB'>{search_products[0]}</span>"
+    else:
+        title_text = f"🎯 组合透视 ({len(search_products)}个商品)"
+        
+    st.markdown(f"### {title_text}", unsafe_allow_html=True)
     
-    # 1. 准备该产品数据
-    prod_curr = df_current[df_current['商品名称'] == search_product]
-    prod_prev = df_previous[df_previous['商品名称'] == search_product] if not df_previous.empty else pd.DataFrame()
+    # 1. 准备该产品(组)数据
+    # 使用 .isin() 支持多选过滤
+    prod_curr = df_current[df_current['商品名称'].isin(search_products)]
+    prod_prev = df_previous[df_previous['商品名称'].isin(search_products)] if not df_previous.empty else pd.DataFrame()
     
-    # 2. 计算产品 KPI
+    # 2. 计算组合 KPI (聚合后的)
     p_qty, p_amt, p_profit, p_cup_price, p_margin, p_daily_qty, p_daily_amt = calculate_metrics(prod_curr, days_current)
     
-    # 3. 计算排名
-    rank_df = df_current.groupby('商品名称', as_index=False).agg({'销售数量':'sum'})
-    rank_df = rank_df.sort_values('销售数量', ascending=False).reset_index(drop=True)
-    rank_df['Rank'] = rank_df.index + 1
-    total_products = len(rank_df)
-    
-    try:
-        my_rank = rank_df[rank_df['商品名称'] == search_product]['Rank'].values[0]
-        rank_str = f"第 {my_rank} 名"
-    except:
-        rank_str = "无排名"
+    # 3. 计算排名 (如果选多个，这里展示的是组合的总销售额贡献占比)
+    total_sales_all = df_current['销售金额'].sum()
+    sales_contribution = (p_amt / total_sales_all) if total_sales_all > 0 else 0
+    rank_str = f"贡献占比 {sales_contribution:.1%}"
 
     # 4. 计算环比
     p_delta_qty = p_delta_amt = p_delta_margin = None
@@ -380,7 +380,7 @@ if search_product != "(未选择)":
         p_delta_amt = ((p_amt - pp_amt) / pp_amt) if pp_amt != 0 else 0
         p_delta_margin = p_margin - pp_margin
 
-    # 5. 渲染单品卡片
+    # 5. 渲染组合卡片
     with st.container(border=True):
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
         
@@ -390,39 +390,37 @@ if search_product != "(未选择)":
             col.metric(label, val, d_str, delta_color="inverse")
             if sub_text: col.caption(sub_text)
 
-        prod_card(col_p1, "本期销量", f"{int(p_qty)} 杯", p_delta_qty, sub_text=f"🏆 全店排名：{rank_str} / {total_products}")
-        prod_card(col_p2, "本期营收", f"¥{p_amt:,.2f}", p_delta_amt, sub_text=f"📅 日均销量：{p_daily_qty:.1f} 杯")
+        prod_card(col_p1, "组合销量", f"{int(p_qty)} 杯", p_delta_qty, sub_text=f"📅 日均销量：{p_daily_qty:.1f} 杯")
+        prod_card(col_p2, "组合营收", f"¥{p_amt:,.2f}", p_delta_amt, sub_text=rank_str)
         if uploaded_cost:
-            prod_card(col_p3, "毛利率", f"{p_margin:.2f}%", p_delta_margin, sub_text="💰 盈利能力考核")
+            prod_card(col_p3, "综合毛利率", f"{p_margin:.2f}%", p_delta_margin, sub_text="💰 组合盈利能力")
         else:
             col_p3.metric("毛利率", "--", help="请上传成本档案")
             
-        # 智能诊断
-        avg_vol = rank_df['销售数量'].mean() if not rank_df.empty else 0
-        my_margin = p_margin / 100
+        # 智能诊断 (针对组合)
         avg_margin_all = (df_current['商品毛利'].sum() / df_current['销售金额'].sum()) if df_current['销售金额'].sum() > 0 else 0
+        my_margin = p_margin / 100
         
-        tag = "普通产品"; tag_color = "gray"
-        if p_qty >= avg_vol and my_margin >= avg_margin_all: tag = "🌟 明星产品 (优质)"; tag_color = "blue"
-        elif p_qty >= avg_vol and my_margin < avg_margin_all: tag = "🐮 现金牛 (引流)"; tag_color = "orange"
-        elif p_qty < avg_vol and my_margin >= avg_margin_all: tag = "❓ 潜力股 (需推广)"; tag_color = "purple"
-        elif p_qty < avg_vol and my_margin < avg_margin_all: tag = "🐕 瘦狗 (需优化)"; tag_color = "red"
+        tag = "普通组合"; tag_color = "gray"
+        if my_margin >= avg_margin_all: 
+            tag = "💎 高利组合"; tag_color = "blue"
+        else:
+            tag = "📦 走量组合"; tag_color = "orange"
             
-        col_p4.markdown(f"**🤖 智能诊断**")
+        col_p4.markdown(f"**🤖 组合诊断**")
         col_p4.markdown(f":{tag_color}[**{tag}**]")
-        col_p4.caption(f"销量基准: {int(avg_vol)} | 毛利基准: {avg_margin_all:.1%}")
+        col_p4.caption(f"全店平均毛利: {avg_margin_all:.1%}")
 
-    # === [新增] 各门店售卖龙虎榜 ===
-    st.markdown("##### 🏠 各门店售卖表现 (由高到低)")
+    # === [新增] 组合内部门店表现 ===
+    st.markdown("##### 🏠 组合各门店售卖表现 (合计销量)")
     
-    # 准备数据：按门店聚合该商品销量
+    # 准备数据：按门店聚合该商品组销量
     prod_store_df = prod_curr.groupby('门店名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
-    prod_store_df = prod_store_df.sort_values('销售数量', ascending=True) # Plotly Bar h 升序是从下往上，看起来是降序
+    prod_store_df = prod_store_df.sort_values('销售数量', ascending=True) 
     
     if not prod_store_df.empty:
         with st.container(border=True):
             if PLOTLY_AVAILABLE:
-                # 颜色逻辑：销量越高颜色越深
                 fig_store = px.bar(
                     prod_store_df, 
                     y='门店名称', 
@@ -431,16 +429,17 @@ if search_product != "(未选择)":
                     text='销售数量',
                     color='销售数量',
                     color_continuous_scale='Blues',
-                    hover_data={'销售数量':True, '销售金额':':.2f', '商品毛利':':.2f'}
+                    hover_data={'销售数量':True, '销售金额':':.2f', '商品毛利':':.2f'},
+                    title=f"各门店【{', '.join(search_products)[:20]}...】合计销量"
                 )
                 fig_store.update_traces(textposition='outside')
-                fig_store.update_layout(coloraxis_showscale=False, height=400 + (len(prod_store_df)*10)) # 动态高度
+                fig_store.update_layout(coloraxis_showscale=False, height=400 + (len(prod_store_df)*10))
                 fig_store = update_chart_layout(fig_store)
                 st.plotly_chart(fig_store, use_container_width=True)
             else:
                 st.bar_chart(prod_store_df.set_index('门店名称')['销售数量'])
     else:
-        st.info("该商品在本期无销售记录。")
+        st.info("所选商品在本期无销售记录。")
 
     st.markdown("---")
 
