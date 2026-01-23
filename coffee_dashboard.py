@@ -154,11 +154,7 @@ def process_sales_files(uploaded_files):
     if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
     if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
 
-    # 映射列名
-    column_mapping = {
-        '商品实收': '销售金额',
-        '商品销量': '销售数量'
-    }
+    column_mapping = {'商品实收': '销售金额', '商品销量': '销售数量'}
     df_sales = df_sales.rename(columns=column_mapping)
 
     numeric_cols = ['销售金额', '销售数量']
@@ -240,14 +236,10 @@ else:
         <p style="color: #64748B; font-size: 18px;">专为顿角咖啡打造的智能经营分析平台</p>
     </div>
     """, unsafe_allow_html=True)
-    
     c1, c2, c3 = st.columns(3)
     with c2:
-        if os.path.exists(logo_path):
-            st.image(logo_path, use_container_width=True)
-        else:
-            st.image("https://cdn-icons-png.flaticon.com/512/2935/2935413.png", use_container_width=True, caption="Dunjiao Coffee Analytics")
-    
+        if os.path.exists(logo_path): st.image(logo_path, use_container_width=True)
+        else: st.image("https://cdn-icons-png.flaticon.com/512/2935/2935413.png", use_container_width=True, caption="Dunjiao Coffee Analytics")
     st.stop()
 
 # -----------------------------------------------------------------------------
@@ -298,7 +290,6 @@ if selected_stores:
     if not df_current.empty: df_current = df_current[df_current['门店名称'].isin(selected_stores)]
     if not df_previous.empty: df_previous = df_previous[df_previous['门店名称'].isin(selected_stores)]
 
-# 计算 KPI
 cur_qty, cur_amt, cur_profit, cur_cup_price, cur_margin, cur_daily_qty, cur_daily_amt = calculate_metrics(df_current, days_current)
 
 if is_comparison_mode and not df_previous.empty:
@@ -573,84 +564,89 @@ if is_comparison_mode and '商品类别' in df_current.columns:
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 9.5 [新增/修复] 门店品类涨跌雷达 (UI 优化版 + 分页)
+# 9.5 [重构] 🏪 单店品类涨跌透视 (Store Deep Dive)
 # -----------------------------------------------------------------------------
 if is_comparison_mode and '商品类别' in df_current.columns:
-    st.markdown("### 🏪 门店品类涨跌雷达 (日均杯数变动)")
-    st.caption("颜色越红增长越多，越绿下滑越严重（鼠标悬停查看数值）。")
+    st.markdown("### 🏪 单店品类涨跌透视 (Store Deep Dive)")
+    st.caption("选择一家门店，深入分析其各品类的日均销量变化。")
     
-    # Data Prep
-    store_cat_curr = df_current.groupby(['门店名称', '商品类别'], as_index=False)['销售数量'].sum()
-    store_cat_curr['日均'] = store_cat_curr['销售数量'] / days_current
+    # 1. 准备所有门店列表
+    all_store_list_dd = sorted(df_current['门店名称'].unique().tolist())
     
-    if not df_previous.empty:
-        store_cat_prev = df_previous.groupby(['门店名称', '商品类别'], as_index=False)['销售数量'].sum()
-        store_cat_prev['日均'] = store_cat_prev['销售数量'] / days_previous
+    if all_store_list_dd:
+        # 2. 门店选择器 (翻页式)
+        c_sel, _ = st.columns([1, 2])
+        with c_sel:
+            selected_store_dd = st.selectbox("👉 请选择要分析的门店", all_store_list_dd)
+        
+        # 3. 筛选该店数据
+        store_curr = df_current[df_current['门店名称'] == selected_store_dd]
+        store_prev = df_previous[df_previous['门店名称'] == selected_store_dd] if not df_previous.empty else pd.DataFrame()
+        
+        # 4. 计算该店总日均
+        s_qty_c = store_curr['销售数量'].sum()
+        s_day_c = s_qty_c / days_current
+        
+        s_qty_p = store_prev['销售数量'].sum() if not store_prev.empty else 0
+        s_day_p = s_qty_p / days_previous
+        
+        s_delta = (s_day_c - s_day_p)
+        
+        # 5. 计算该店品类明细
+        sc_curr = store_curr.groupby('商品类别', as_index=False)['销售数量'].sum()
+        sc_curr['日均'] = sc_curr['销售数量'] / days_current
+        
+        if not store_prev.empty:
+            sc_prev = store_prev.groupby('商品类别', as_index=False)['销售数量'].sum()
+            sc_prev['日均'] = sc_prev['销售数量'] / days_previous
+        else:
+            sc_prev = pd.DataFrame(columns=['商品类别', '日均'])
+            
+        sc_merge = pd.merge(sc_curr, sc_prev, on='商品类别', suffixes=('_curr', '_prev'), how='outer').fillna(0)
+        sc_merge['变动'] = sc_merge['日均_curr'] - sc_merge['日均_prev']
+        sc_merge = sc_merge.sort_values('变动', ascending=True) # 排序用于图表
+        
+        # 6. 渲染 UI
+        with st.container(border=True):
+            c_s_kpi, c_s_chart = st.columns([1, 2])
+            
+            with c_s_kpi:
+                st.markdown(f"#### 🏠 {selected_store_dd}")
+                st.metric("总日均杯数", f"{s_day_c:.1f}", f"{s_delta:+.1f} 杯", delta_color="inverse")
+                st.divider()
+                st.markdown("**📋 品类变动详情**")
+                # 简单表格展示
+                display_tbl = sc_merge[['商品类别', '变动']].sort_values('变动', ascending=False)
+                st.dataframe(
+                    display_tbl, 
+                    column_config={
+                        "商品类别": st.column_config.TextColumn("品类"),
+                        "变动": st.column_config.NumberColumn("日均变动", format="%+.2f 杯")
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    height=200
+                )
+
+            with c_s_chart:
+                st.markdown("**📊 品类涨跌瀑布图**")
+                if PLOTLY_AVAILABLE:
+                    sc_merge['颜色'] = np.where(sc_merge['变动'] >= 0, '#EF4444', '#10B981')
+                    fig_s = px.bar(
+                        sc_merge, 
+                        y='商品类别', 
+                        x='变动', 
+                        text='变动',
+                        orientation='h',
+                        title=f"{selected_store_dd} - 品类日均变化"
+                    )
+                    fig_s.update_traces(marker_color=sc_merge['颜色'], texttemplate='%{text:+.1f}')
+                    fig_s = update_chart_layout(fig_s)
+                    st.plotly_chart(fig_s, use_container_width=True)
+                else:
+                    st.bar_chart(sc_merge.set_index('商品类别')['变动'])
     else:
-        store_cat_prev = pd.DataFrame(columns=['门店名称', '商品类别', '日均'])
-        
-    merged_sc = pd.merge(store_cat_curr, store_cat_prev, on=['门店名称', '商品类别'], suffixes=('_curr', '_prev'), how='outer').fillna(0)
-    merged_sc['变动'] = merged_sc['日均_curr'] - merged_sc['日均_prev']
-    
-    heatmap_data = merged_sc.pivot(index='门店名称', columns='商品类别', values='变动').fillna(0)
-    
-    # --- 分页控制 ---
-    PAGE_SIZE = 15
-    total_stores = len(heatmap_data)
-    total_pages = max(1, -(-total_stores // PAGE_SIZE)) # Ceiling division
-    
-    col_pagination, _ = st.columns([1, 3])
-    with col_pagination:
-        page = st.number_input(f"选择页码 (共{total_pages}页)", min_value=1, max_value=total_pages, value=1)
-        
-    start_idx = (page - 1) * PAGE_SIZE
-    end_idx = min(start_idx + PAGE_SIZE, total_stores)
-    
-    heatmap_data_page = heatmap_data.iloc[start_idx:end_idx]
-    
-    # 动态高度计算
-    n_stores_page = len(heatmap_data_page)
-    fig_height = max(400, n_stores_page * 50) 
-    
-    with st.container(border=True):
-        if PLOTLY_AVAILABLE:
-            fig_hm = go.Figure(data=go.Heatmap(
-                z=heatmap_data_page.values,
-                x=heatmap_data_page.columns,
-                y=heatmap_data_page.index,
-                colorscale=[[0, '#10B981'], [0.5, '#FFFFFF'], [1, '#EF4444']], 
-                zmid=0,
-                hovertemplate="门店: %{y}<br>品类: %{x}<br>日均变化: %{z:+.2f}杯<extra></extra>", 
-                xgap=1, ygap=1
-            ))
-            fig_hm.update_layout(
-                xaxis_title="",
-                yaxis_title="",
-                height=fig_height,
-                xaxis={'side': 'top'},
-            )
-            fig_hm = update_chart_layout(fig_hm)
-            st.plotly_chart(fig_hm, use_container_width=True)
-    
-    # 涨跌榜单
-    st.markdown("#### 🚀 涨跌榜单 Top 5")
-    c_rise, c_fall = st.columns(2)
-    
-    merged_sc = merged_sc.sort_values('变动', ascending=False)
-    top_risers = merged_sc.head(5)
-    top_fallers = merged_sc.tail(5).sort_values('变动', ascending=True)
-    
-    with c_rise:
-        with st.container(border=True):
-            st.markdown("##### 🏆 增长最快")
-            for _, row in top_risers.iterrows():
-                if row['变动'] > 0: st.markdown(f"**{row['门店名称']} - {row['商品类别']}**: :red[+{row['变动']:.2f} 杯]")
-    
-    with c_fall:
-        with st.container(border=True):
-            st.markdown("##### ⚠️ 下滑最快")
-            for _, row in top_fallers.iterrows():
-                if row['变动'] < 0: st.markdown(f"**{row['门店名称']} - {row['商品类别']}**: :green[{row['变动']:.2f} 杯]")
+        st.info("当前无门店数据。")
 
 st.markdown("---")
 
