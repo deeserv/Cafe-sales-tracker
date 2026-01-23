@@ -426,7 +426,6 @@ if search_products:
                     title=f"各门店【{', '.join(search_products)[:20]}...】合计销量"
                 )
                 fig_store.update_traces(textposition='outside')
-                # 动态高度设置：每家店40像素 + 基础高度
                 fig_height = max(400, len(prod_store_df) * 40)
                 fig_store.update_layout(coloraxis_showscale=False, height=fig_height)
                 fig_store = update_chart_layout(fig_store)
@@ -574,7 +573,7 @@ if is_comparison_mode and '商品类别' in df_current.columns:
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 9.5 [新增/修复] 门店品类涨跌雷达 (UI 优化版)
+# 9.5 [新增/修复] 门店品类涨跌雷达 (UI 优化版 + 分页)
 # -----------------------------------------------------------------------------
 if is_comparison_mode and '商品类别' in df_current.columns:
     st.markdown("### 🏪 门店品类涨跌雷达 (日均杯数变动)")
@@ -595,19 +594,32 @@ if is_comparison_mode and '商品类别' in df_current.columns:
     
     heatmap_data = merged_sc.pivot(index='门店名称', columns='商品类别', values='变动').fillna(0)
     
+    # --- 分页控制 ---
+    PAGE_SIZE = 15
+    total_stores = len(heatmap_data)
+    total_pages = max(1, -(-total_stores // PAGE_SIZE)) # Ceiling division
+    
+    col_pagination, _ = st.columns([1, 3])
+    with col_pagination:
+        page = st.number_input(f"选择页码 (共{total_pages}页)", min_value=1, max_value=total_pages, value=1)
+        
+    start_idx = (page - 1) * PAGE_SIZE
+    end_idx = min(start_idx + PAGE_SIZE, total_stores)
+    
+    heatmap_data_page = heatmap_data.iloc[start_idx:end_idx]
+    
     # 动态高度计算
-    n_stores = len(heatmap_data)
-    fig_height = max(400, n_stores * 40)
+    n_stores_page = len(heatmap_data_page)
+    fig_height = max(400, n_stores_page * 50) 
     
     with st.container(border=True):
         if PLOTLY_AVAILABLE:
             fig_hm = go.Figure(data=go.Heatmap(
-                z=heatmap_data.values,
-                x=heatmap_data.columns,
-                y=heatmap_data.index,
+                z=heatmap_data_page.values,
+                x=heatmap_data_page.columns,
+                y=heatmap_data_page.index,
                 colorscale=[[0, '#10B981'], [0.5, '#FFFFFF'], [1, '#EF4444']], 
                 zmid=0,
-                # 移除格子内文字，只保留悬停
                 hovertemplate="门店: %{y}<br>品类: %{x}<br>日均变化: %{z:+.2f}杯<extra></extra>", 
                 xgap=1, ygap=1
             ))
