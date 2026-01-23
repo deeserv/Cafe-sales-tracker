@@ -742,18 +742,12 @@ if uploaded_cost:
             st.markdown("#### 📋 诊断报告")
             cows = matrix_df[matrix_df['角色'].str.contains("现金牛")]['商品名称'].tolist()
             dogs = matrix_df[matrix_df['角色'].str.contains("瘦狗")]['商品名称'].tolist()
-            
             st.markdown(f"**🐮 现金牛产品:** {len(cows)} 个")
-            if cows: 
-                st.success("、".join(cows))
-            else: 
-                st.caption("暂无")
-            
+            if cows: st.success("、".join(cows))
+            else: st.caption("暂无")
             st.markdown(f"**🐕 瘦狗产品:** {len(dogs)} 个")
-            if dogs: 
-                st.error("、".join(dogs))
-            else: 
-                st.caption("暂无")
+            if dogs: st.error("、".join(dogs))
+            else: st.caption("暂无")
 
 # -----------------------------------------------------------------------------
 # 11. 明细表格 (去重，智能合并类别)
