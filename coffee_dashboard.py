@@ -195,6 +195,7 @@ def calculate_metrics(df, operate_days):
     amt = df['销售金额'].sum()
     profit = df['商品毛利'].sum()
     
+    # 衍生指标
     cup_price = (amt / qty) if qty > 0 else 0 
     margin = (profit / amt * 100) if amt > 0 else 0
     
@@ -477,6 +478,9 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 # 8. 图表区域
 # -----------------------------------------------------------------------------
+# 【关键修复】定义 df_display
+df_display = df_current.copy()
+
 c1, c2 = st.columns(2)
 
 # 图表数据源聚合
