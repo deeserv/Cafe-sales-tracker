@@ -55,9 +55,9 @@ except ImportError:
 COLOR_PALETTE = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899']
 
 # -----------------------------------------------------------------------------
-# 2. 内置分类字典 (Hardcoded Categories) - 您的需求核心
+# 2. 内置分类字典 (自动匹配逻辑优化)
 # -----------------------------------------------------------------------------
-# 这里直接定义了分类规则，不再需要上传文件
+# 根据您提供的表格整理，增加了大小写兼容
 CATEGORY_MAPPING_DATA = [
     # === 咖啡饮品 ===
     {"一级分类": "咖啡饮品", "二级分类": "常规咖啡"},
@@ -149,49 +149,51 @@ def process_sales_dataframe(df_sales):
             ).fillna(0)
     return df_sales
 
-# === 升级版：使用内置字典进行分类映射 ===
+# === 升级版：分类映射 ===
 def merge_category_map(df_sales):
     """
-    使用内置的 CATEGORY_MAPPING_DATA 将一级分类合并到销售数据中。
+    将内置的一级分类合并到销售数据中。
+    增强鲁棒性：去除空格、统一格式。
     """
     if df_sales is None: return None
     
-    # 默认值初始化
-    if '一级分类' not in df_sales.columns:
-        df_sales['一级分类'] = '未分类'
-    if '二级分类' not in df_sales.columns:
-        # 如果销售表里有'商品类别'，它其实就是二级分类
-        df_sales['二级分类'] = df_sales['商品类别'] if '商品类别' in df_sales.columns else '未分类'
+    # 确保列存在
+    if '商品类别' not in df_sales.columns:
+         df_sales['一级分类'] = '未分类'
+         df_sales['二级分类'] = '未分类'
+         return df_sales
 
-    if '商品类别' in df_sales.columns:
-        # 1. 创建映射 DataFrame
-        df_cat = pd.DataFrame(CATEGORY_MAPPING_DATA)
-        
-        # 2. 规范化字符串 (去除空格)
-        df_cat['一级分类'] = df_cat['一级分类'].astype(str).str.strip()
-        df_cat['二级分类'] = df_cat['二级分类'].astype(str).str.strip()
-        df_sales['商品类别'] = df_sales['商品类别'].astype(str).str.strip()
-        
-        # 3. 去重 (防止配置表有重复导致数据翻倍)
-        df_cat = df_cat.drop_duplicates(subset=['二级分类'])
-        
-        # 4. 合并
-        # 销售表的 '商品类别' 对应 映射表的 '二级分类'
-        df_sales = pd.merge(df_sales, df_cat, left_on='商品类别', right_on='二级分类', how='left', suffixes=('', '_map'))
-        
-        # 5. 更新列 (优先使用匹配到的一级分类)
-        # 注意：merge后会有 '一级分类' 和 '一级分类_map' (如果原表已有该列)
-        # 这里直接用 _map 覆盖，或者新建
-        if '一级分类_y' in df_sales.columns: # pandas merge 默认后缀 _x, _y
-             df_sales['一级分类'] = df_sales['一级分类_y'].fillna('未分类')
-             df_sales = df_sales.drop(columns=['一级分类_y', '二级分类_y', '一级分类_x', '二级分类_x'], errors='ignore')
-        elif '一级分类' in df_sales.columns:
-             # 如果 merge 成功，且列名未冲突（原表无一级分类）
-             df_sales['一级分类'] = df_sales['一级分类'].fillna('未分类')
-        
-        # 确保二级分类列存在
-        df_sales['二级分类'] = df_sales['商品类别']
-
+    # 1. 准备映射表
+    df_cat = pd.DataFrame(CATEGORY_MAPPING_DATA)
+    # 去除两端空格
+    df_cat['二级分类'] = df_cat['二级分类'].astype(str).str.strip()
+    df_cat = df_cat.drop_duplicates(subset=['二级分类']) # 确保字典唯一
+    
+    # 2. 准备销售数据
+    # 先备份原始类别
+    df_sales['原始类别'] = df_sales['商品类别']
+    # 去除空格，以便匹配
+    df_sales['商品类别_clean'] = df_sales['商品类别'].astype(str).str.strip()
+    
+    # 3. 合并
+    df_sales = pd.merge(
+        df_sales, 
+        df_cat, 
+        left_on='商品类别_clean', 
+        right_on='二级分类', 
+        how='left',
+        suffixes=('', '_map')
+    )
+    
+    # 4. 填充
+    df_sales['一级分类'] = df_sales['一级分类'].fillna('未分类')
+    # 二级分类直接用原始的商品类别
+    df_sales['二级分类'] = df_sales['原始类别'].fillna('未分类')
+    
+    # 5. 清理临时列
+    cols_to_drop = ['商品类别_clean', '二级分类_map', '一级分类_map'] # 清理可能的冗余
+    df_sales = df_sales.drop(columns=[c for c in cols_to_drop if c in df_sales.columns], errors='ignore')
+    
     return df_sales
 
 def merge_cost_data(df_sales, df_cost):
@@ -250,8 +252,6 @@ with st.sidebar.expander("💾 数据仓库管理", expanded=True):
             st.rerun()
             
     st.divider()
-    
-    # 移除了品类归纳表上传入口
     
     st.markdown("**📤 上传销售数据**")
     new_sales = st.file_uploader("支持多选上传", type=["xlsx", "csv"], accept_multiple_files=True)
@@ -322,17 +322,23 @@ else:
 with st.sidebar.expander("🛠️ 筛选与参数", expanded=True):
     # 1. 门店筛选
     selected_stores = st.multiselect("门店筛选", all_stores, placeholder="默认全选")
+    if selected_stores:
+        st.success(f"✅ 已选中 {len(selected_stores)} 家门店") # 视觉反馈
     
     # 2. 品类筛选
     st.markdown("##### 🏷️ 品类筛选")
     all_l1_cats = sorted([str(x) for x in df_final['一级分类'].dropna().unique()])
     selected_l1 = st.multiselect("一级分类", all_l1_cats, placeholder="默认全选")
+    if selected_l1:
+        st.success(f"✅ 已选中 {len(selected_l1)} 个一级分类") # 视觉反馈
     
     if selected_l1:
         available_l2 = sorted([str(x) for x in df_final[df_final['一级分类'].isin(selected_l1)]['二级分类'].dropna().unique()])
     else:
         available_l2 = sorted([str(x) for x in df_final['二级分类'].dropna().unique()])
     selected_l2 = st.multiselect("二级分类", available_l2, placeholder="默认全选")
+    if selected_l2:
+        st.success(f"✅ 已选中 {len(selected_l2)} 个二级分类") # 视觉反馈
     
     st.divider()
 
@@ -514,37 +520,62 @@ with c2:
     with st.container(border=True):
         if saved_cost_path:
             st.markdown("##### 🏆 利润贡献排行")
-            tab_cat, tab_prod = st.tabs(["📂 按分类", "☕️ 按单品"])
+            # 扩展 Tab: 一级分类、二级分类、单品
+            tab_l1, tab_l2, tab_prod = st.tabs(["📂 一级分类", "🗂️ 二级分类", "☕️ 按单品"])
             total_profit = df_chart_data['商品毛利'].sum()
-            with tab_cat:
+            
+            # 1. 一级分类贡献
+            with tab_l1:
                 if '一级分类' in df_display.columns:
-                    df_cat = df_display.groupby('一级分类', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True)
-                    df_cat['商品毛利'] = df_cat['商品毛利'].round(2)
-                    df_cat['贡献率'] = np.where(total_profit>0, df_cat['商品毛利']/total_profit, 0)
+                    df_l1 = df_display.groupby('一级分类', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True)
+                    df_l1['商品毛利'] = df_l1['商品毛利'].round(2)
+                    df_l1['贡献率'] = np.where(total_profit>0, df_l1['商品毛利']/total_profit, 0)
                     if PLOTLY_AVAILABLE:
-                        fig_cat = px.bar(df_cat, y='一级分类', x='商品毛利', orientation='h', text=df_cat['贡献率'].apply(lambda x: f"{x:.2%}"), color='商品毛利', color_continuous_scale='Mint', labels={'商品毛利':'毛利额'})
-                        fig_cat.update_traces(textposition='outside')
-                        fig_cat.update_layout(coloraxis_showscale=False)
-                        fig_cat = update_chart_layout(fig_cat)
-                        st.plotly_chart(fig_cat, use_container_width=True)
-                else: st.info("请上传品类归纳表")
+                        fig_l1 = px.bar(df_l1, y='一级分类', x='商品毛利', orientation='h', 
+                                        text=df_l1['贡献率'].apply(lambda x: f"{x:.2%}"), 
+                                        color='商品毛利', color_continuous_scale='Mint', labels={'商品毛利':'毛利额'})
+                        fig_l1.update_traces(textposition='outside')
+                        fig_l1.update_layout(coloraxis_showscale=False)
+                        fig_l1 = update_chart_layout(fig_l1)
+                        st.plotly_chart(fig_l1, use_container_width=True)
+                else: st.info("数据中无一级分类")
+
+            # 2. 二级分类贡献 (新增)
+            with tab_l2:
+                if '二级分类' in df_display.columns:
+                    df_l2 = df_display.groupby('二级分类', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True)
+                    df_l2['商品毛利'] = df_l2['商品毛利'].round(2)
+                    df_l2['贡献率'] = np.where(total_profit>0, df_l2['商品毛利']/total_profit, 0)
+                    if PLOTLY_AVAILABLE:
+                        fig_l2 = px.bar(df_l2, y='二级分类', x='商品毛利', orientation='h', 
+                                        text=df_l2['贡献率'].apply(lambda x: f"{x:.2%}"), 
+                                        color='商品毛利', color_continuous_scale='Teal', labels={'商品毛利':'毛利额'})
+                        fig_l2.update_traces(textposition='outside')
+                        fig_l2.update_layout(coloraxis_showscale=False)
+                        fig_l2 = update_chart_layout(fig_l2)
+                        st.plotly_chart(fig_l2, use_container_width=True)
+                else: st.info("数据中无二级分类")
+
+            # 3. 单品贡献
             with tab_prod:
                 df_prod = df_chart_data.sort_values('商品毛利', ascending=True).tail(10)
                 df_prod['商品毛利'] = df_prod['商品毛利'].round(2)
                 df_prod['贡献率'] = np.where(total_profit>0, df_prod['商品毛利']/total_profit, 0)
                 if PLOTLY_AVAILABLE:
-                    fig_prod = px.bar(df_prod, y='商品名称', x='商品毛利', orientation='h', text=df_prod['贡献率'].apply(lambda x: f"{x:.2%}"), color='商品毛利', color_continuous_scale='Oranges', labels={'商品毛利':'毛利额'})
+                    fig_prod = px.bar(df_prod, y='商品名称', x='商品毛利', orientation='h', 
+                                      text=df_prod['贡献率'].apply(lambda x: f"{x:.2%}"), 
+                                      color='商品毛利', color_continuous_scale='Oranges', labels={'商品毛利':'毛利额'})
                     fig_prod.update_traces(textposition='outside')
                     fig_prod.update_layout(coloraxis_showscale=False)
                     fig_prod = update_chart_layout(fig_prod)
                     st.plotly_chart(fig_prod, use_container_width=True)
         else: st.info("请上传成本档案")
 
-# --- 品类涨跌 (日均) - 使用二级分类 ---
-if is_comparison_mode:
+# --- 品类涨跌 (日均) ---
+if is_comparison_mode and '二级分类' in df_current.columns:
     st.markdown("### 📈 品类涨跌风向标 (日均杯数变动)")
-    # 优先使用二级分类，如果没有则一级，再没有则原商品类别
-    cat_col = '二级分类' if '二级分类' in df_current.columns else ('一级分类' if '一级分类' in df_current.columns else '商品类别')
+    # 默认使用二级分类展示
+    cat_col = '二级分类'
     
     cat_curr = df_current.groupby(cat_col)['销售数量'].sum().reset_index()
     cat_curr['日均杯数'] = cat_curr['销售数量'] / days_current
@@ -572,14 +603,14 @@ if is_comparison_mode:
 
 st.markdown("---")
 
-# --- 单店透视 (分页) - 使用二级分类 ---
-if is_comparison_mode:
+# --- 单店透视 (分页) ---
+if is_comparison_mode and '二级分类' in df_current.columns:
     st.markdown("### 🏪 门店品类涨跌透视 (Store Deep Dive)")
     st.caption("选择一家门店，深入分析其各品类的日均销量变化。")
     all_store_list_dd = sorted(df_current['门店名称'].unique().tolist())
     
-    # 同样优先使用二级分类
-    cat_col = '二级分类' if '二级分类' in df_current.columns else ('一级分类' if '一级分类' in df_current.columns else '商品类别')
+    # 默认使用二级分类
+    cat_col = '二级分类'
     
     if all_store_list_dd:
         c_sel, _ = st.columns([1, 2])
