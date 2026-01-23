@@ -154,7 +154,11 @@ def process_sales_files(uploaded_files):
     if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
     if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
 
-    column_mapping = {'商品实收': '销售金额', '商品销量': '销售数量'}
+    # 映射列名
+    column_mapping = {
+        '商品实收': '销售金额',
+        '商品销量': '销售数量'
+    }
     df_sales = df_sales.rename(columns=column_mapping)
 
     numeric_cols = ['销售金额', '销售数量']
@@ -236,14 +240,12 @@ else:
         <p style="color: #64748B; font-size: 18px;">专为顿角咖啡打造的智能经营分析平台</p>
     </div>
     """, unsafe_allow_html=True)
-    
     c1, c2, c3 = st.columns(3)
     with c2:
         if os.path.exists(logo_path):
             st.image(logo_path, use_container_width=True)
         else:
             st.image("https://cdn-icons-png.flaticon.com/512/2935/2935413.png", use_container_width=True, caption="Dunjiao Coffee Analytics")
-    
     st.stop()
 
 # -----------------------------------------------------------------------------
@@ -309,17 +311,17 @@ if is_comparison_mode and not df_previous.empty:
 else:
     delta_qty = delta_amt = delta_price = delta_margin = delta_daily_qty = delta_daily_amt = None
 
-# === 🌟 核心升级：新品/单品多选搜索 ===
+# === 🌟 核心升级：新品/组合多选搜索 ===
 st.sidebar.markdown("---")
-st.sidebar.subheader("🔍 新品/组合搜索 (支持多选)")
-st.sidebar.caption("选择多个产品可查看【系列/组合】表现")
+st.sidebar.subheader("🔍 新品/组合搜索")
+st.sidebar.caption("选择多个产品以查看组合表现")
 
 all_products_list = []
 if not df_current.empty:
     all_products_list = sorted(df_current['商品名称'].unique().tolist())
 
-# 【升级】改为 multiselect 支持多选
-search_products = st.sidebar.multiselect("选择商品名称", all_products_list, placeholder="请选择一个或多个商品")
+# 改回 Multiselect 支持多选
+search_products = st.sidebar.multiselect("选择商品名称", all_products_list, placeholder="可多选，例如：生椰拿铁、厚椰拿铁")
 
 # -----------------------------------------------------------------------------
 # 6. 主界面
@@ -349,7 +351,7 @@ def update_chart_layout(fig):
     return fig
 
 # -----------------------------------------------------------------------------
-# 🎯 产品/组合透视卡片 (支持多选)
+# 🎯 产品/组合透视卡片 (多选逻辑)
 # -----------------------------------------------------------------------------
 if search_products:
     if len(search_products) == 1:
@@ -359,15 +361,14 @@ if search_products:
         
     st.markdown(f"### {title_text}", unsafe_allow_html=True)
     
-    # 1. 准备该产品(组)数据
-    # 使用 .isin() 支持多选过滤
+    # 1. 准备该产品(组)数据 (使用 .isin 过滤)
     prod_curr = df_current[df_current['商品名称'].isin(search_products)]
     prod_prev = df_previous[df_previous['商品名称'].isin(search_products)] if not df_previous.empty else pd.DataFrame()
     
-    # 2. 计算组合 KPI (聚合后的)
+    # 2. 计算组合 KPI
     p_qty, p_amt, p_profit, p_cup_price, p_margin, p_daily_qty, p_daily_amt = calculate_metrics(prod_curr, days_current)
     
-    # 3. 计算排名 (如果选多个，这里展示的是组合的总销售额贡献占比)
+    # 3. 计算贡献占比
     total_sales_all = df_current['销售金额'].sum()
     sales_contribution = (p_amt / total_sales_all) if total_sales_all > 0 else 0
     rank_str = f"贡献占比 {sales_contribution:.1%}"
@@ -411,10 +412,10 @@ if search_products:
         col_p4.markdown(f":{tag_color}[**{tag}**]")
         col_p4.caption(f"全店平均毛利: {avg_margin_all:.1%}")
 
-    # === [新增] 组合内部门店表现 ===
+    # === 组合内部门店表现 (合计销量) ===
     st.markdown("##### 🏠 组合各门店售卖表现 (合计销量)")
     
-    # 准备数据：按门店聚合该商品组销量
+    # 按门店聚合，不分商品
     prod_store_df = prod_curr.groupby('门店名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
     prod_store_df = prod_store_df.sort_values('销售数量', ascending=True) 
     
@@ -477,16 +478,15 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 # 8. 图表区域
 # -----------------------------------------------------------------------------
-# 【关键修复】定义 df_display
-df_display = df_current.copy()
+# 聚合逻辑：确保去重，只按商品名称聚合
+df_chart_data = df_current.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
+
+# 尝试合并回类别 (取众数) 用于染色
+if '商品类别' in df_current.columns:
+    cat_map = df_current.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
+    df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
 
 c1, c2 = st.columns(2)
-
-# 图表数据源聚合
-df_chart_data = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
-if '商品类别' in df_display.columns:
-    cat_map = df_display.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
-    df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
 
 with c1:
     with st.container(border=True):
@@ -582,7 +582,7 @@ st.markdown("---")
 if uploaded_cost:
     st.markdown("### 🧠 智能产品矩阵 (BCG)")
     
-    # 使用聚合后的数据
+    # 使用聚合后的数据 (df_chart_data 已经按名称去重)
     matrix_df = df_chart_data.copy()
     matrix_df['毛利率'] = np.where(matrix_df['销售金额']>0, matrix_df['商品毛利']/matrix_df['销售金额'], 0)
     matrix_df['日均销量'] = matrix_df['销售数量'] / days_current
@@ -629,7 +629,7 @@ if uploaded_cost:
 st.markdown("### 📄 商品明细透视")
 
 # 聚合逻辑：按商品名称聚合 (强制去重)
-df_view = df_display.groupby('商品名称', as_index=False).agg({
+df_view = df_current.groupby('商品名称', as_index=False).agg({
     '商品类别': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知',
     '销售数量': 'sum',
     '销售金额': 'sum',
