@@ -240,12 +240,14 @@ else:
         <p style="color: #64748B; font-size: 18px;">专为顿角咖啡打造的智能经营分析平台</p>
     </div>
     """, unsafe_allow_html=True)
+    
     c1, c2, c3 = st.columns(3)
     with c2:
         if os.path.exists(logo_path):
             st.image(logo_path, use_container_width=True)
         else:
             st.image("https://cdn-icons-png.flaticon.com/512/2935/2935413.png", use_container_width=True, caption="Dunjiao Coffee Analytics")
+    
     st.stop()
 
 # -----------------------------------------------------------------------------
@@ -320,7 +322,7 @@ all_products_list = []
 if not df_current.empty:
     all_products_list = sorted(df_current['商品名称'].unique().tolist())
 
-# 改回 Multiselect 支持多选
+# Multiselect 支持多选
 search_products = st.sidebar.multiselect("选择商品名称", all_products_list, placeholder="可多选，例如：生椰拿铁、厚椰拿铁")
 
 # -----------------------------------------------------------------------------
@@ -361,19 +363,15 @@ if search_products:
         
     st.markdown(f"### {title_text}", unsafe_allow_html=True)
     
-    # 1. 准备该产品(组)数据 (使用 .isin 过滤)
     prod_curr = df_current[df_current['商品名称'].isin(search_products)]
     prod_prev = df_previous[df_previous['商品名称'].isin(search_products)] if not df_previous.empty else pd.DataFrame()
     
-    # 2. 计算组合 KPI
     p_qty, p_amt, p_profit, p_cup_price, p_margin, p_daily_qty, p_daily_amt = calculate_metrics(prod_curr, days_current)
     
-    # 3. 计算贡献占比
     total_sales_all = df_current['销售金额'].sum()
     sales_contribution = (p_amt / total_sales_all) if total_sales_all > 0 else 0
     rank_str = f"贡献占比 {sales_contribution:.1%}"
 
-    # 4. 计算环比
     p_delta_qty = p_delta_amt = p_delta_margin = None
     if is_comparison_mode and not prod_prev.empty:
         pp_qty, pp_amt, _, _, pp_margin, _, _ = calculate_metrics(prod_prev, days_previous)
@@ -381,7 +379,6 @@ if search_products:
         p_delta_amt = ((p_amt - pp_amt) / pp_amt) if pp_amt != 0 else 0
         p_delta_margin = p_margin - pp_margin
 
-    # 5. 渲染组合卡片
     with st.container(border=True):
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
         
@@ -398,7 +395,6 @@ if search_products:
         else:
             col_p3.metric("毛利率", "--", help="请上传成本档案")
             
-        # 智能诊断 (针对组合)
         avg_margin_all = (df_current['商品毛利'].sum() / df_current['销售金额'].sum()) if df_current['销售金额'].sum() > 0 else 0
         my_margin = p_margin / 100
         
@@ -412,10 +408,7 @@ if search_products:
         col_p4.markdown(f":{tag_color}[**{tag}**]")
         col_p4.caption(f"全店平均毛利: {avg_margin_all:.1%}")
 
-    # === 组合内部门店表现 (合计销量) ===
     st.markdown("##### 🏠 组合各门店售卖表现 (合计销量)")
-    
-    # 按门店聚合，不分商品
     prod_store_df = prod_curr.groupby('门店名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
     prod_store_df = prod_store_df.sort_values('销售数量', ascending=True) 
     
@@ -423,13 +416,8 @@ if search_products:
         with st.container(border=True):
             if PLOTLY_AVAILABLE:
                 fig_store = px.bar(
-                    prod_store_df, 
-                    y='门店名称', 
-                    x='销售数量', 
-                    orientation='h',
-                    text='销售数量',
-                    color='销售数量',
-                    color_continuous_scale='Blues',
+                    prod_store_df, y='门店名称', x='销售数量', orientation='h',
+                    text='销售数量', color='销售数量', color_continuous_scale='Blues',
                     hover_data={'销售数量':True, '销售金额':':.2f', '商品毛利':':.2f'},
                     title=f"各门店【{', '.join(search_products)[:20]}...】合计销量"
                 )
@@ -478,12 +466,15 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 # 8. 图表区域
 # -----------------------------------------------------------------------------
+# 确保定义 df_display
+df_display = df_current.copy()
+
 # 聚合逻辑：确保去重，只按商品名称聚合
-df_chart_data = df_current.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
+df_chart_data = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
 
 # 尝试合并回类别 (取众数) 用于染色
-if '商品类别' in df_current.columns:
-    cat_map = df_current.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
+if '商品类别' in df_display.columns:
+    cat_map = df_display.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
     df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
 
 c1, c2 = st.columns(2)
@@ -574,6 +565,81 @@ if is_comparison_mode and '商品类别' in df_current.columns:
             st.plotly_chart(fig_diff, use_container_width=True)
         else: st.bar_chart(cat_diff.set_index('商品类别')['日均杯数变动'])
 
+# -----------------------------------------------------------------------------
+# 9.5 [新增] 门店品类涨跌雷达 (热力矩阵)
+# -----------------------------------------------------------------------------
+if is_comparison_mode and '商品类别' in df_current.columns:
+    st.markdown("### 🏪 门店品类涨跌雷达 (日均杯数变动)")
+    st.caption("透视各门店不同品类的业绩变化，颜色越红增长越多，越绿下滑越严重。")
+    
+    # Data Prep
+    # 1. Group by Store & Category
+    store_cat_curr = df_current.groupby(['门店名称', '商品类别'], as_index=False)['销售数量'].sum()
+    store_cat_curr['日均'] = store_cat_curr['销售数量'] / days_current
+    
+    if not df_previous.empty:
+        store_cat_prev = df_previous.groupby(['门店名称', '商品类别'], as_index=False)['销售数量'].sum()
+        store_cat_prev['日均'] = store_cat_prev['销售数量'] / days_previous
+    else:
+        store_cat_prev = pd.DataFrame(columns=['门店名称', '商品类别', '日均'])
+        
+    # 2. Merge
+    merged_sc = pd.merge(store_cat_curr, store_cat_prev, on=['门店名称', '商品类别'], suffixes=('_curr', '_prev'), how='outer').fillna(0)
+    merged_sc['变动'] = merged_sc['日均_curr'] - merged_sc['日均_prev']
+    
+    # 3. Pivot for Heatmap
+    heatmap_data = merged_sc.pivot(index='门店名称', columns='商品类别', values='变动').fillna(0)
+    
+    # 4. Plot
+    with st.container(border=True):
+        if PLOTLY_AVAILABLE:
+            fig_hm = go.Figure(data=go.Heatmap(
+                z=heatmap_data.values,
+                x=heatmap_data.columns,
+                y=heatmap_data.index,
+                colorscale=[[0, '#10B981'], [0.5, '#FFFFFF'], [1, '#EF4444']], # Green -> White -> Red
+                zmid=0, # Center color scale at 0
+                texttemplate="%{z:+.1f}",
+                textfont={"size": 10},
+                hoverongaps=False
+            ))
+            fig_hm.update_layout(
+                title="门店-品类 涨跌热力图 (日均杯数)",
+                xaxis_title="品类",
+                yaxis_title="门店",
+                height=600
+            )
+            fig_hm = update_chart_layout(fig_hm)
+            st.plotly_chart(fig_hm, use_container_width=True)
+    
+    # 5. Top Movers Text
+    st.markdown("#### 🚀 涨跌榜单")
+    c_rise, c_fall = st.columns(2)
+    
+    merged_sc = merged_sc.sort_values('变动', ascending=False)
+    top_risers = merged_sc.head(5)
+    top_fallers = merged_sc.tail(5).sort_values('变动', ascending=True)
+    
+    with c_rise:
+        with st.container(border=True):
+            st.markdown("##### 🏆 增长最快 (日均)")
+            for _, row in top_risers.iterrows():
+                if row['变动'] > 0:
+                    st.markdown(f"**{row['门店名称']} - {row['商品类别']}**: :red[+{row['变动']:.2f} 杯]")
+                else:
+                    st.caption("无增长")
+                    break
+    
+    with c_fall:
+        with st.container(border=True):
+            st.markdown("##### ⚠️ 下滑最快 (日均)")
+            for _, row in top_fallers.iterrows():
+                if row['变动'] < 0:
+                    st.markdown(f"**{row['门店名称']} - {row['商品类别']}**: :green[{row['变动']:.2f} 杯]")
+                else:
+                    st.caption("无下滑")
+                    break
+
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
@@ -629,7 +695,7 @@ if uploaded_cost:
 st.markdown("### 📄 商品明细透视")
 
 # 聚合逻辑：按商品名称聚合 (强制去重)
-df_view = df_current.groupby('商品名称', as_index=False).agg({
+df_view = df_display.groupby('商品名称', as_index=False).agg({
     '商品类别': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知',
     '销售数量': 'sum',
     '销售金额': 'sum',
