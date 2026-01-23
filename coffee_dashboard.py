@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-import glob
 import math
 
 # -----------------------------------------------------------------------------
@@ -15,32 +14,93 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 注入自定义 CSS
+# 注入自定义 CSS 以实现“商务年轻”风格
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    .stApp { background-color: #F8FAFC; font-family: 'Inter', sans-serif; }
-    img { border-radius: 12px; transition: transform 0.3s ease; }
-    [data-testid="stSidebar"] { background-color: #FFFFFF; border-right: 1px solid #E2E8F0; }
-    h1 { color: #0F172A; font-weight: 800; letter-spacing: -0.03em; }
-    h3 { color: #334155; font-weight: 600; }
+
+    /* 全局设置 */
+    .stApp {
+        background-color: #F8FAFC;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* 图片圆角优化 */
+    img {
+        border-radius: 12px;
+        transition: transform 0.3s ease;
+    }
+    
+    /* 侧边栏优化 */
+    [data-testid="stSidebar"] {
+        background-color: #FFFFFF;
+        border-right: 1px solid #E2E8F0;
+        box-shadow: 2px 0 10px rgba(0,0,0,0.03);
+    }
+    
+    /* 标题样式 */
+    h1 {
+        color: #0F172A;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        margin-bottom: 0px;
+        padding-bottom: 0px;
+    }
+    h3 {
+        color: #334155;
+        font-weight: 600;
+    }
+    
+    /* 卡片容器样式 (悬浮效果) */
     div[data-testid="stVerticalBlockBorderWrapper"] {
-        background-color: #FFFFFF; border-radius: 16px; border: 1px solid #F1F5F9;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); padding: 24px; transition: all 0.3s ease;
+        background-color: #FFFFFF;
+        border-radius: 16px;
+        border: 1px solid #F1F5F9;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+        padding: 24px;
+        transition: all 0.3s ease;
     }
     div[data-testid="stVerticalBlockBorderWrapper"]:hover {
-        transform: translateY(-2px); box-shadow: 0 12px 20px -5px rgba(0, 0, 0, 0.1); border-color: #E2E8F0;
+        transform: translateY(-2px);
+        box-shadow: 0 12px 20px -5px rgba(0, 0, 0, 0.1);
+        border-color: #E2E8F0;
     }
+
+    /* KPI 指标数字增强 */
     [data-testid="stMetricValue"] {
         font-size: 36px !important;
         background: -webkit-linear-gradient(120deg, #2563EB, #06B6D4);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
         font-weight: 800 !important;
     }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #FFFFFF; padding: 8px; border-radius: 12px; }
-    .stTabs [data-baseweb="tab"] { height: 44px; border-radius: 8px; border: none; color: #64748B; font-weight: 600; background-color: #F8FAFC; }
-    .stTabs [aria-selected="true"] { background-color: #EFF6FF; color: #2563EB; }
-    div[data-testid="stMultiSelect"] label { font-weight: bold; color: #2563EB; }
+    
+    /* 调整 Tab 样式 */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: #FFFFFF;
+        padding: 8px;
+        border-radius: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 44px;
+        border-radius: 8px;
+        border: none;
+        color: #64748B;
+        font-weight: 600;
+        background-color: #F8FAFC;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #EFF6FF;
+        color: #2563EB;
+    }
+    
+    /* 多选框高亮 */
+    div[data-testid="stMultiSelect"] label {
+        font-weight: bold;
+        color: #2563EB;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -52,62 +112,55 @@ try:
 except ImportError:
     PLOTLY_AVAILABLE = False
 
+# 配色方案 (Vibrant Modern)
 COLOR_PALETTE = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899']
 
 # -----------------------------------------------------------------------------
-# 2. 本地数据仓库管理系统
+# 2. 数据处理与清洗函数
 # -----------------------------------------------------------------------------
-DATA_DIR = "data_storage"
-COST_FILE_NAME = "cost_data.xlsx"
+def load_data_file(file):
+    if file is None: return None
+    filename = file.name.lower()
+    
+    if filename.endswith('.xlsx') or filename.endswith('.xls'):
+        try:
+            return pd.read_excel(file, engine='openpyxl')
+        except ImportError:
+            st.error("❌ 缺少 openpyxl 库。请在终端运行: pip3 install openpyxl")
+            return None
+        except Exception:
+            pass
 
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-
-def save_uploaded_file(uploaded_file, is_cost=False):
-    if uploaded_file is None: return None
-    if is_cost:
-        file_path = os.path.join(DATA_DIR, COST_FILE_NAME)
-    else:
-        file_path = os.path.join(DATA_DIR, uploaded_file.name)
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    return file_path
-
-def get_saved_sales_files():
-    files = glob.glob(os.path.join(DATA_DIR, "*"))
-    sales_files = [f for f in files if COST_FILE_NAME not in f and (f.endswith('.csv') or f.endswith('.xlsx') or f.endswith('.xls'))]
-    sales_files.sort()
-    return sales_files
-
-def get_saved_cost_file():
-    path = os.path.join(DATA_DIR, COST_FILE_NAME)
-    if os.path.exists(path):
-        return path
+    encodings = ['utf-8', 'utf-8-sig', 'gbk', 'gb18030', 'mac_roman', 'big5']
+    for enc in encodings:
+        try:
+            file.seek(0)
+            df = pd.read_csv(file, encoding=enc)
+            return df
+        except:
+            continue
     return None
 
-# -----------------------------------------------------------------------------
-# 3. 数据加载与清洗函数
-# -----------------------------------------------------------------------------
-def load_data_from_path(file_path):
-    if not file_path: return None
-    try:
-        if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
-            return pd.read_excel(file_path, engine='openpyxl')
-        else:
-            encodings = ['utf-8', 'utf-8-sig', 'gbk', 'gb18030']
-            for enc in encodings:
-                try: return pd.read_csv(file_path, encoding=enc)
-                except: continue
-    except Exception as e:
-        st.error(f"读取文件出错 {file_path}: {e}")
-    return None
-
-def process_sales_dataframe(df_sales):
-    if df_sales is None: return None
-    column_mapping = {'商品实收': '销售金额', '商品销量': '销售数量'}
-    df_sales = df_sales.rename(columns=column_mapping)
+def process_sales_files(uploaded_files):
+    if not uploaded_files: return None
+    all_dfs = []
+    for file in uploaded_files:
+        df = load_data_file(file)
+        if df is not None: all_dfs.append(df)
+    if not all_dfs:
+        st.error("❌ 所有上传的销售文件都无法读取。")
+        return None
+    df_sales = pd.concat(all_dfs, ignore_index=True)
+    
     if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
     if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
+
+    column_mapping = {
+        '商品实收': '销售金额',
+        '商品销量': '销售数量'
+    }
+    df_sales = df_sales.rename(columns=column_mapping)
+
     numeric_cols = ['销售金额', '销售数量']
     for col in numeric_cols:
         if col in df_sales.columns:
@@ -117,108 +170,123 @@ def process_sales_dataframe(df_sales):
             ).fillna(0)
     return df_sales
 
-def merge_cost_data(df_sales, df_cost):
+def merge_cost_data(df_sales, cost_file):
     if df_sales is None: return None
-    if df_cost is not None:
-        if '产品' in df_cost.columns: df_cost = df_cost.rename(columns={'产品': '商品名称'})
-        if '成本' in df_cost.columns:
-            df_cost['成本'] = pd.to_numeric(df_cost['成本'], errors='coerce').fillna(0)
-            if df_cost['商品名称'].duplicated().any():
-                df_cost = df_cost.groupby('商品名称', as_index=False)['成本'].mean()
-            df_sales = pd.merge(df_sales, df_cost[['商品名称', '成本']], on='商品名称', how='left')
-            df_sales['成本'] = df_sales['成本'].fillna(0)
-            df_sales['商品毛利'] = df_sales['销售金额'] - (df_sales['销售数量'] * df_sales['成本'])
+    if cost_file is not None:
+        df_cost = load_data_file(cost_file)
+        if df_cost is not None:
+            if '产品' in df_cost.columns: df_cost = df_cost.rename(columns={'产品': '商品名称'})
+            if '成本' in df_cost.columns:
+                df_cost['成本'] = pd.to_numeric(df_cost['成本'], errors='coerce').fillna(0)
+                if df_cost['商品名称'].duplicated().any():
+                    df_cost = df_cost.groupby('商品名称', as_index=False)['成本'].mean()
+                df_sales = pd.merge(df_sales, df_cost[['商品名称', '成本']], on='商品名称', how='left')
+                df_sales['成本'] = df_sales['成本'].fillna(0)
+                df_sales['商品毛利'] = df_sales['销售金额'] - (df_sales['销售数量'] * df_sales['成本'])
+            else:
+                st.warning("⚠️ 成本档案缺少 '成本' 列")
+                df_sales['商品毛利'] = 0
         else:
+            st.warning("⚠️ 成本档案读取失败")
             df_sales['商品毛利'] = 0
     else:
         df_sales['商品毛利'] = 0; df_sales['成本'] = 0
     return df_sales
 
+# === 新增函数：处理品类映射 ===
+def merge_category_map(df_sales, category_file):
+    if df_sales is None: return None
+    if category_file is not None:
+        df_cat = load_data_file(category_file)
+        if df_cat is not None:
+            # 1. 自动填充一级分类 (ffill)
+            df_cat.iloc[:, 0] = df_cat.iloc[:, 0].ffill()
+            
+            # 2. 规范列名 (假设第一列是一级，第二列是二级)
+            df_cat.columns = ['一级分类', '二级分类']
+            
+            # 3. 合并到销售表 (销售表的 '商品类别' 对应 映射表的 '二级分类')
+            # 使用 left join 保留所有销售记录
+            df_sales = pd.merge(df_sales, df_cat, left_on='商品类别', right_on='二级分类', how='left')
+            
+            # 4. 填充未匹配到的 (Optional: 填为 '其他')
+            df_sales['一级分类'] = df_sales['一级分类'].fillna('未分类')
+            df_sales['二级分类'] = df_sales['二级分类'].fillna(df_sales['商品类别']) # 如果没匹配到，就用原来的
+            
+            return df_sales
+    
+    # 如果没上传映射表，或者没匹配成功，为了代码兼容，我们需要创建这两个列
+    if '一级分类' not in df_sales.columns:
+        df_sales['一级分类'] = df_sales['商品类别'] if '商品类别' in df_sales.columns else '未分类'
+    if '二级分类' not in df_sales.columns:
+        df_sales['二级分类'] = df_sales['商品类别'] if '商品类别' in df_sales.columns else '未分类'
+        
+    return df_sales
+
 def calculate_metrics(df, operate_days):
     if df.empty or operate_days <= 0: return 0, 0, 0, 0, 0, 0, 0
+    
     qty = df['销售数量'].sum()
     amt = df['销售金额'].sum()
     profit = df['商品毛利'].sum()
+    
     cup_price = (amt / qty) if qty > 0 else 0 
     margin = (profit / amt * 100) if amt > 0 else 0
+    
     daily_qty = qty / operate_days
     daily_amt = amt / operate_days
+    
     return qty, amt, profit, cup_price, margin, daily_qty, daily_amt
 
 # -----------------------------------------------------------------------------
-# 4. 侧边栏布局
+# 3. 侧边栏布局
 # -----------------------------------------------------------------------------
 logo_path = "logo.png"
-if os.path.exists(logo_path): st.sidebar.image(logo_path, width=120)
-else: st.sidebar.image("https://cdn-icons-png.flaticon.com/512/751/751621.png", width=100)
+if os.path.exists(logo_path):
+    st.sidebar.image(logo_path, width=120)
+else:
+    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/751/751621.png", width=100)
 
 st.sidebar.markdown("## 顿角咖啡智能数据看板")
 st.sidebar.caption("Dunjiao Coffee · Intelligent BI System")
 
-with st.sidebar.expander("💾 数据仓库管理", expanded=True):
-    st.markdown("**💰 成本档案**")
-    saved_cost_path = get_saved_cost_file()
-    if saved_cost_path:
-        st.success("✅ 已有存档的成本表")
-        if st.checkbox("更新成本表?"):
-            new_cost = st.file_uploader("上传新成本表", type=["xlsx", "csv"])
-            if new_cost:
-                save_uploaded_file(new_cost, is_cost=True)
-                st.rerun()
-    else:
-        st.warning("⚠️ 暂无成本档案")
-        new_cost = st.file_uploader("请上传成本表", type=["xlsx", "csv"])
-        if new_cost:
-            save_uploaded_file(new_cost, is_cost=True)
-            st.rerun()
+with st.sidebar.expander("📂 数据源配置", expanded=True):
+    uploaded_sales_files = st.file_uploader("1. 上传销售数据 (多选)", type=["csv", "xlsx"], accept_multiple_files=True)
+    uploaded_cost = st.file_uploader("2. 上传成本档案", type=["csv", "xlsx"])
+    # === 新增：品类归纳表上传 ===
+    uploaded_category = st.file_uploader("3. 上传品类归纳表 (可选)", type=["csv", "xlsx"], help="包含【一级分类】和【二级分类】对应关系的表格")
 
-    st.divider()
-
-    st.markdown("**📤 上传新一期销售数据**")
-    new_sales = st.file_uploader("支持多选上传", type=["xlsx", "csv"], accept_multiple_files=True)
-    if new_sales:
-        for f in new_sales:
-            save_uploaded_file(f)
-        st.success(f"成功存入 {len(new_sales)} 个文件!")
-        st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("📂 选择分析数据")
-saved_sales_files = get_saved_sales_files()
-
-if not saved_sales_files:
-    st.sidebar.warning("仓库为空，请先在上方上传数据。")
-    df_final = None
-else:
-    file_names = [os.path.basename(f) for f in saved_sales_files]
-    selected_files = st.sidebar.multiselect("请勾选要分析的历史文件", file_names, default=file_names, placeholder="请选择")
+# -----------------------------------------------------------------------------
+# 4. 数据加载
+# -----------------------------------------------------------------------------
+df_final = None
+if uploaded_sales_files:
+    df_sales_merged = process_sales_files(uploaded_sales_files)
+    df_with_cost = merge_cost_data(df_sales_merged, uploaded_cost)
+    # === 合并品类映射 ===
+    df_final = merge_category_map(df_with_cost, uploaded_category)
     
-    if selected_files:
-        all_dfs = []
-        for fname in selected_files:
-            fpath = os.path.join(DATA_DIR, fname)
-            df = load_data_from_path(fpath)
-            if df is not None:
-                df = process_sales_dataframe(df)
-                all_dfs.append(df)
-        
-        if all_dfs:
-            df_sales_merged = pd.concat(all_dfs, ignore_index=True)
-            df_cost = None
-            if saved_cost_path:
-                df_cost = load_data_from_path(saved_cost_path)
-            df_final = merge_cost_data(df_sales_merged, df_cost)
-            st.sidebar.success(f"已加载 {len(selected_files)} 个周期数据")
-        else: df_final = None
-    else: df_final = None
-
-if df_final is None:
-    st.image("https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=1200&h=250&q=80", use_container_width=True)
-    st.markdown("<div style='text-align:center;padding:40px;'><h1>👋 欢迎回来</h1><p>请在左侧 <b>“数据仓库管理”</b> 中上传或勾选数据。</p></div>", unsafe_allow_html=True)
+    if df_final is not None:
+        st.sidebar.success(f"✅ 数据加载完成")
+else:
+    st.markdown("""
+    <div style="text-align: center; padding: 40px;">
+        <h1 style="font-size: 42px; color: #1E293B;">👋 欢迎使用顿角咖啡智能数据看板</h1>
+        <p style="color: #64748B; font-size: 18px;">专为顿角咖啡打造的智能经营分析平台</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    c1, c2, c3 = st.columns(3)
+    with c2:
+        if os.path.exists(logo_path):
+            st.image(logo_path, use_container_width=True)
+        else:
+            st.image("https://cdn-icons-png.flaticon.com/512/2935/2935413.png", use_container_width=True, caption="Dunjiao Coffee Analytics")
+    
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 5. 核心逻辑
+# 5. 筛选与逻辑 (增加品类筛选)
 # -----------------------------------------------------------------------------
 if '统计周期' in df_final.columns:
     available_periods = sorted(list(df_final['统计周期'].dropna().unique()))
@@ -235,10 +303,28 @@ else:
     all_stores = []
 
 with st.sidebar.expander("🛠️ 筛选与参数", expanded=True):
+    # 1. 门店筛选
     selected_stores = st.multiselect("门店筛选", all_stores, placeholder="默认全选")
     
+    # 2. === 新增：品类筛选 ===
+    st.markdown("##### 🏷️ 品类筛选")
+    
+    # 一级分类筛选
+    all_l1_cats = sorted(list(df_final['一级分类'].dropna().unique()))
+    selected_l1 = st.multiselect("一级分类", all_l1_cats, placeholder="默认全选")
+    
+    # 二级分类筛选 (根据一级联动)
+    if selected_l1:
+        # 只显示选中一级分类下的二级分类
+        available_l2 = sorted(list(df_final[df_final['一级分类'].isin(selected_l1)]['二级分类'].dropna().unique()))
+    else:
+        available_l2 = sorted(list(df_final['二级分类'].dropna().unique()))
+        
+    selected_l2 = st.multiselect("二级分类", available_l2, placeholder="默认全选")
+    
+    st.divider()
+
     if len(available_periods) >= 2:
-        st.markdown("---")
         enable_comparison = st.checkbox("开启环比分析", value=True)
         if enable_comparison:
             is_comparison_mode = True
@@ -261,14 +347,27 @@ with st.sidebar.expander("🛠️ 筛选与参数", expanded=True):
         days_current = st.number_input("营业天数", 1, 31, 5)
         df_current = df_final.copy()
 
+# === 执行筛选逻辑 ===
+# 1. 门店筛选
 if selected_stores:
     if not df_current.empty: df_current = df_current[df_current['门店名称'].isin(selected_stores)]
     if not df_previous.empty: df_previous = df_previous[df_previous['门店名称'].isin(selected_stores)]
 
+# 2. 品类筛选
+if selected_l1:
+    if not df_current.empty: df_current = df_current[df_current['一级分类'].isin(selected_l1)]
+    if not df_previous.empty: df_previous = df_previous[df_previous['一级分类'].isin(selected_l1)]
+
+if selected_l2:
+    if not df_current.empty: df_current = df_current[df_current['二级分类'].isin(selected_l2)]
+    if not df_previous.empty: df_previous = df_previous[df_previous['二级分类'].isin(selected_l2)]
+
+# 计算 KPI
 cur_qty, cur_amt, cur_profit, cur_cup_price, cur_margin, cur_daily_qty, cur_daily_amt = calculate_metrics(df_current, days_current)
 
 if is_comparison_mode and not df_previous.empty:
     prev_qty, prev_amt, prev_profit, prev_cup_price, prev_margin, prev_daily_qty, prev_daily_amt = calculate_metrics(df_previous, days_previous)
+    
     delta_qty = ((cur_qty - prev_qty) / prev_qty) if prev_qty != 0 else 0
     delta_amt = ((cur_amt - prev_amt) / prev_amt) if prev_amt != 0 else 0
     delta_price = ((cur_cup_price - prev_cup_price) / prev_cup_price) if prev_cup_price != 0 else 0
@@ -278,35 +377,59 @@ if is_comparison_mode and not df_previous.empty:
 else:
     delta_qty = delta_amt = delta_price = delta_margin = delta_daily_qty = delta_daily_amt = None
 
-# 新品搜索
+# === 新品/组合多选搜索 (放在筛选下方) ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 新品/组合搜索")
-all_products_list = sorted(df_current['商品名称'].unique().tolist()) if not df_current.empty else []
+
+all_products_list = []
+if not df_current.empty:
+    all_products_list = sorted(df_current['商品名称'].unique().tolist())
+
 search_products = st.sidebar.multiselect("选择商品名称", all_products_list, placeholder="可多选")
 
 # -----------------------------------------------------------------------------
-# 6. 主界面渲染
+# 6. 主界面
 # -----------------------------------------------------------------------------
 st.image("https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&w=1200&h=250&q=80", use_container_width=True)
+
 c_title, c_period = st.columns([2, 1])
 with c_title: st.title("📊 顿角咖啡智能数据看板")
 with c_period:
     if is_comparison_mode:
         st.markdown(f"<div style='text-align:right; padding-top:10px; color:#64748B;'><b>分析周期</b><br><span style='color:#3B82F6; font-size:1.1em'>{p_current}</span> vs <span style='color:#94A3B8'>{p_previous}</span></div>", unsafe_allow_html=True)
+
 st.markdown("---")
 
+if df_current.empty:
+    st.warning("⚠️ 当前筛选结果为空。")
+    st.stop()
+
 def update_chart_layout(fig):
-    fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font_family="Inter", font_color="#4B5563", margin=dict(l=20, r=20, t=40, b=20))
+    fig.update_layout(
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font_family="Inter",
+        font_color="#4B5563",
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
     return fig
 
-# --- 🎯 组合透视 ---
+# -----------------------------------------------------------------------------
+# 🎯 产品/组合透视卡片 (多选逻辑)
+# -----------------------------------------------------------------------------
 if search_products:
-    title_text = f"🎯 单品透视：<span style='color:#2563EB'>{search_products[0]}</span>" if len(search_products) == 1 else f"🎯 组合透视 ({len(search_products)}个商品)"
+    if len(search_products) == 1:
+        title_text = f"🎯 单品透视：<span style='color:#2563EB'>{search_products[0]}</span>"
+    else:
+        title_text = f"🎯 组合透视 ({len(search_products)}个商品)"
+        
     st.markdown(f"### {title_text}", unsafe_allow_html=True)
     
     prod_curr = df_current[df_current['商品名称'].isin(search_products)]
     prod_prev = df_previous[df_previous['商品名称'].isin(search_products)] if not df_previous.empty else pd.DataFrame()
+    
     p_qty, p_amt, p_profit, p_cup_price, p_margin, p_daily_qty, p_daily_amt = calculate_metrics(prod_curr, days_current)
+    
     total_sales_all = df_current['销售金额'].sum()
     sales_contribution = (p_amt / total_sales_all) if total_sales_all > 0 else 0
     rank_str = f"贡献占比 {sales_contribution:.1%}"
@@ -320,6 +443,7 @@ if search_products:
 
     with st.container(border=True):
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        
         def prod_card(col, label, val, delta=None, sub_text=""):
             d_str = f"{delta:+.1%}" if delta is not None else None
             if label == "综合毛利率" and delta is not None: d_str = f"{delta:+.1f} pts"
@@ -328,14 +452,20 @@ if search_products:
 
         prod_card(col_p1, "组合销量", f"{int(p_qty)} 杯", p_delta_qty, sub_text=f"📅 日均销量：{p_daily_qty:.1f} 杯")
         prod_card(col_p2, "组合营收", f"¥{p_amt:,.2f}", p_delta_amt, sub_text=rank_str)
-        if saved_cost_path:
+        if uploaded_cost:
             prod_card(col_p3, "综合毛利率", f"{p_margin:.2f}%", p_delta_margin, sub_text="💰 组合盈利能力")
-        else: col_p3.metric("毛利率", "--")
+        else:
+            col_p3.metric("毛利率", "--", help="请上传成本档案")
             
         avg_margin_all = (df_current['商品毛利'].sum() / df_current['销售金额'].sum()) if df_current['销售金额'].sum() > 0 else 0
         my_margin = p_margin / 100
-        tag = "💎 高利组合" if my_margin >= avg_margin_all else "📦 走量组合"
-        tag_color = "blue" if my_margin >= avg_margin_all else "orange"
+        
+        tag = "普通组合"; tag_color = "gray"
+        if my_margin >= avg_margin_all: 
+            tag = "💎 高利组合"; tag_color = "blue"
+        else:
+            tag = "📦 走量组合"; tag_color = "orange"
+            
         col_p4.markdown(f"**🤖 组合诊断**")
         col_p4.markdown(f":{tag_color}[**{tag}**]")
         col_p4.caption(f"全店平均毛利: {avg_margin_all:.1%}")
@@ -343,26 +473,45 @@ if search_products:
     st.markdown("##### 🏠 组合各门店售卖表现 (合计销量)")
     prod_store_df = prod_curr.groupby('门店名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
     prod_store_df = prod_store_df.sort_values('销售数量', ascending=True) 
+    
+    # 强制保留2位
     prod_store_df['销售数量'] = prod_store_df['销售数量'].round(2)
+    
     if not prod_store_df.empty:
         with st.container(border=True):
             if PLOTLY_AVAILABLE:
-                fig_store = px.bar(prod_store_df, y='门店名称', x='销售数量', orientation='h', text='销售数量', color='销售数量', color_continuous_scale='Blues', hover_data={'销售数量':':.2f', '销售金额':':.2f', '商品毛利':':.2f'})
+                fig_store = px.bar(
+                    prod_store_df, 
+                    y='门店名称', 
+                    x='销售数量', 
+                    orientation='h',
+                    text='销售数量',
+                    color='销售数量',
+                    color_continuous_scale='Blues',
+                    hover_data={'销售数量':':.2f', '销售金额':':.2f', '商品毛利':':.2f'},
+                    title=f"各门店【{', '.join(search_products)[:20]}...】合计销量"
+                )
                 fig_store.update_traces(textposition='outside', texttemplate='%{text:,.2f}') 
                 fig_height = max(400, len(prod_store_df) * 40)
                 fig_store.update_layout(coloraxis_showscale=False, height=fig_height)
                 fig_store = update_chart_layout(fig_store)
                 st.plotly_chart(fig_store, use_container_width=True)
-            else: st.bar_chart(prod_store_df.set_index('门店名称')['销售数量'])
-    else: st.info("所选商品无销售记录。")
+            else:
+                st.bar_chart(prod_store_df.set_index('门店名称')['销售数量'])
+    else:
+        st.info("所选商品在本期无销售记录。")
+
     st.markdown("---")
 
-# --- 全局 KPI ---
+# -----------------------------------------------------------------------------
+# 7. 全局 KPI 卡片区域
+# -----------------------------------------------------------------------------
 def metric_card(title, value, delta, prefix="", suffix="", is_percent=False, icon=""):
     delta_str = None
     if delta is not None:
         if is_percent: delta_str = f"{delta:+.2f} pts"
         else: delta_str = f"{delta:+.2%}"
+    
     with st.container(border=True):
         label_text = f"{icon} {title}" if icon else title
         st.metric(label=label_text, value=f"{prefix}{value}{suffix}", delta=delta_str, delta_color="inverse")
@@ -378,76 +527,97 @@ r2c1, r2c2, r2c3 = st.columns(3)
 with r2c1: metric_card("日均杯数", f"{cur_daily_qty:.1f}", delta_daily_qty, suffix=" 杯", icon="📅")
 with r2c2: metric_card("日均营收", f"{cur_daily_amt:,.2f}", delta_daily_amt, prefix="¥", icon="💳")
 with r2c3:
-    if saved_cost_path:
+    if uploaded_cost:
         metric_card("平均毛利率", f"{cur_margin:.2f}", delta_margin, suffix="%", is_percent=True, icon="📈")
     else:
         with st.container(border=True): st.metric("📈 平均毛利率", "--")
 
 st.markdown("---")
 
-# --- 图表区域 ---
+# -----------------------------------------------------------------------------
+# 8. 图表区域
+# -----------------------------------------------------------------------------
 df_display = df_current.copy()
+
+# 聚合去重
 df_chart_data = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
-if '商品类别' in df_display.columns:
-    cat_map = df_display.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
-    df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
 
 c1, c2 = st.columns(2)
+
 with c1:
     with st.container(border=True):
         st.markdown("##### 🔥 本期销量排行 (Top 10)")
         top_sales = df_chart_data.sort_values('销售数量', ascending=True).tail(10)
         top_sales['销售数量'] = top_sales['销售数量'].round(2)
+        
         if PLOTLY_AVAILABLE:
-            fig = px.bar(top_sales, y='商品名称', x='销售数量', orientation='h', text='销售数量', color_discrete_sequence=[COLOR_PALETTE[0]])
+            fig = px.bar(
+                top_sales, y='商品名称', x='销售数量', orientation='h', text='销售数量',
+                color_discrete_sequence=[COLOR_PALETTE[0]]
+            )
             fig.update_traces(textposition='outside', texttemplate='%{text:,.2f}')
             fig = update_chart_layout(fig)
             st.plotly_chart(fig, use_container_width=True)
-        else: st.bar_chart(top_sales.set_index('商品名称')['销售数量'])
+        else:
+            st.bar_chart(top_sales.set_index('商品名称')['销售数量'])
 
 with c2:
     with st.container(border=True):
-        if saved_cost_path:
+        if uploaded_cost:
             st.markdown("##### 🏆 利润贡献排行")
             tab_cat, tab_prod = st.tabs(["📂 按类别", "☕️ 按单品"])
             total_profit = df_chart_data['商品毛利'].sum()
+            
             with tab_cat:
-                if '商品类别' in df_chart_data.columns:
-                    df_cat = df_chart_data.groupby('商品类别', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True)
+                if '一级分类' in df_display.columns:
+                    # 使用一级分类聚合
+                    df_cat = df_display.groupby('一级分类', as_index=False)['商品毛利'].sum().sort_values('商品毛利', ascending=True)
                     df_cat['商品毛利'] = df_cat['商品毛利'].round(2)
                     df_cat['贡献率'] = np.where(total_profit>0, df_cat['商品毛利']/total_profit, 0)
+                    
                     if PLOTLY_AVAILABLE:
-                        fig_cat = px.bar(df_cat, y='商品类别', x='商品毛利', orientation='h', text=df_cat['贡献率'].apply(lambda x: f"{x:.2%}"), color='商品毛利', color_continuous_scale='Mint', labels={'商品毛利':'毛利额'})
+                        fig_cat = px.bar(
+                            df_cat, y='一级分类', x='商品毛利', orientation='h', 
+                            text=df_cat['贡献率'].apply(lambda x: f"{x:.2%}"), 
+                            color='商品毛利', color_continuous_scale='Mint', labels={'商品毛利':'毛利额'}
+                        )
                         fig_cat.update_traces(textposition='outside')
                         fig_cat.update_layout(coloraxis_showscale=False)
                         fig_cat = update_chart_layout(fig_cat)
                         st.plotly_chart(fig_cat, use_container_width=True)
-                else: st.info("暂无类别数据")
+                else: st.info("请上传品类归纳表以查看类别分析")
+
             with tab_prod:
                 df_prod = df_chart_data.sort_values('商品毛利', ascending=True).tail(10)
                 df_prod['商品毛利'] = df_prod['商品毛利'].round(2)
                 df_prod['贡献率'] = np.where(total_profit>0, df_prod['商品毛利']/total_profit, 0)
                 if PLOTLY_AVAILABLE:
-                    fig_prod = px.bar(df_prod, y='商品名称', x='商品毛利', orientation='h', text=df_prod['贡献率'].apply(lambda x: f"{x:.2%}"), color='商品毛利', color_continuous_scale='Oranges', labels={'商品毛利':'毛利额'})
+                    fig_prod = px.bar(
+                        df_prod, y='商品名称', x='商品毛利', orientation='h', 
+                        text=df_prod['贡献率'].apply(lambda x: f"{x:.2%}"),
+                        color='商品毛利', color_continuous_scale='Oranges', labels={'商品毛利':'毛利额'}
+                    )
                     fig_prod.update_traces(textposition='outside')
                     fig_prod.update_layout(coloraxis_showscale=False)
                     fig_prod = update_chart_layout(fig_prod)
                     st.plotly_chart(fig_prod, use_container_width=True)
         else: st.info("请上传成本档案")
 
-# --- 品类涨跌 (日均) ---
-if is_comparison_mode and '商品类别' in df_current.columns:
+# -----------------------------------------------------------------------------
+# 9. 品类涨跌 (日均杯数变动) - 使用一级分类
+# -----------------------------------------------------------------------------
+if is_comparison_mode and '一级分类' in df_current.columns:
     st.markdown("### 📈 品类涨跌风向标 (日均杯数变动)")
-    cat_curr = df_current.groupby('商品类别')['销售数量'].sum().reset_index()
+    cat_curr = df_current.groupby('一级分类')['销售数量'].sum().reset_index()
     cat_curr['日均杯数'] = cat_curr['销售数量'] / days_current
     
     if not df_previous.empty:
-        cat_prev = df_previous.groupby('商品类别')['销售数量'].sum().reset_index()
+        cat_prev = df_previous.groupby('一级分类')['销售数量'].sum().reset_index()
         cat_prev['日均杯数'] = cat_prev['销售数量'] / days_previous
     else:
-        cat_prev = pd.DataFrame(columns=['商品类别', '销售数量', '日均杯数'])
+        cat_prev = pd.DataFrame(columns=['一级分类', '销售数量', '日均杯数'])
     
-    cat_diff = pd.merge(cat_curr, cat_prev, on='商品类别', suffixes=('_curr', '_prev'), how='outer').fillna(0)
+    cat_diff = pd.merge(cat_curr, cat_prev, on='一级分类', suffixes=('_curr', '_prev'), how='outer').fillna(0)
     cat_diff['日均杯数变动'] = cat_diff['日均杯数_curr'] - cat_diff['日均杯数_prev']
     cat_diff['日均杯数变动'] = cat_diff['日均杯数变动'].round(2)
     cat_diff = cat_diff.sort_values('日均杯数变动', ascending=True)
@@ -455,81 +625,103 @@ if is_comparison_mode and '商品类别' in df_current.columns:
     
     with st.container(border=True):
         if PLOTLY_AVAILABLE:
-            fig_diff = px.bar(cat_diff, y='商品类别', x='日均杯数变动', text='日均杯数变动', orientation='h', title="品类日均杯数净增长/减少 (杯)")
+            fig_diff = px.bar(cat_diff, y='一级分类', x='日均杯数变动', text='日均杯数变动', orientation='h', title="品类日均杯数净增长/减少 (杯)")
             fig_diff.update_traces(marker_color=cat_diff['颜色'], texttemplate='%{text:+.2f}杯')
             fig_diff.update_layout(yaxis={'categoryorder':'total ascending'})
             fig_diff = update_chart_layout(fig_diff)
             st.plotly_chart(fig_diff, use_container_width=True)
-        else: st.bar_chart(cat_diff.set_index('商品类别')['日均杯数变动'])
+        else: st.bar_chart(cat_diff.set_index('一级分类')['日均杯数变动'])
 
 st.markdown("---")
 
-# --- 单店透视 (分页) ---
-if is_comparison_mode and '商品类别' in df_current.columns:
-    st.markdown("### 🏪 门店品类涨跌透视 (Store Deep Dive)")
-    st.caption("选择一家门店，深入分析其各品类的日均销量变化。")
-    all_store_list_dd = sorted(df_current['门店名称'].unique().tolist())
-    if all_store_list_dd:
-        c_sel, _ = st.columns([1, 2])
-        with c_sel: selected_store_dd = st.selectbox("👉 请选择要分析的门店", all_store_list_dd)
+# -----------------------------------------------------------------------------
+# 9.5 [新增/修复] 门店品类涨跌雷达 (分页版)
+# -----------------------------------------------------------------------------
+if is_comparison_mode and '一级分类' in df_current.columns:
+    st.markdown("### 🏪 门店品类涨跌雷达 (日均杯数变动)")
+    st.caption("颜色越红增长越多，越绿下滑越严重（鼠标悬停查看数值）。")
+    
+    # 1. 准备全量数据
+    store_cat_curr = df_current.groupby(['门店名称', '一级分类'], as_index=False)['销售数量'].sum()
+    store_cat_curr['日均'] = store_cat_curr['销售数量'] / days_current
+    
+    if not df_previous.empty:
+        store_cat_prev = df_previous.groupby(['门店名称', '一级分类'], as_index=False)['销售数量'].sum()
+        store_cat_prev['日均'] = store_cat_prev['销售数量'] / days_previous
+    else:
+        store_cat_prev = pd.DataFrame(columns=['门店名称', '一级分类', '日均'])
         
-        store_curr = df_current[df_current['门店名称'] == selected_store_dd]
-        store_prev = df_previous[df_previous['门店名称'] == selected_store_dd] if not df_previous.empty else pd.DataFrame()
+    merged_sc = pd.merge(store_cat_curr, store_cat_prev, on=['门店名称', '一级分类'], suffixes=('_curr', '_prev'), how='outer').fillna(0)
+    merged_sc['变动'] = merged_sc['日均_curr'] - merged_sc['日均_prev']
+    
+    # 2. 生成全量透视表
+    heatmap_data = merged_sc.pivot(index='门店名称', columns='一级分类', values='变动').fillna(0)
+    
+    # 3. 分页逻辑
+    PAGE_SIZE = 10
+    total_stores = len(heatmap_data)
+    
+    if total_stores > 0:
+        total_pages = math.ceil(total_stores / PAGE_SIZE)
         
-        s_qty_c = store_curr['销售数量'].sum()
-        s_day_c = s_qty_c / days_current
-        s_qty_p = store_prev['销售数量'].sum() if not store_prev.empty else 0
-        s_day_p = s_qty_p / days_previous
-        s_delta = (s_day_c - s_day_p)
+        c_page, _ = st.columns([1, 4])
+        with c_page:
+            curr_page = st.number_input(f"选择页码 (共{total_pages}页)", min_value=1, max_value=total_pages, value=1)
         
-        sc_curr = store_curr.groupby('商品类别', as_index=False)['销售数量'].sum()
-        sc_curr['日均'] = sc_curr['销售数量'] / days_current
-        if not store_prev.empty:
-            sc_prev = store_prev.groupby('商品类别', as_index=False)['销售数量'].sum()
-            sc_prev['日均'] = sc_prev['销售数量'] / days_previous
-        else: sc_prev = pd.DataFrame(columns=['商品类别', '日均'])
-            
-        sc_merge = pd.merge(sc_curr, sc_prev, on='商品类别', suffixes=('_curr', '_prev'), how='outer').fillna(0)
-        sc_merge['变动'] = sc_merge['日均_curr'] - sc_merge['日均_prev']
-        sc_merge['变动'] = sc_merge['变动'].round(2)
-        sc_merge = sc_merge.sort_values('变动', ascending=True) 
+        start_idx = (curr_page - 1) * PAGE_SIZE
+        end_idx = min(start_idx + PAGE_SIZE, total_stores)
+        
+        # 切片当前页数据
+        heatmap_page = heatmap_data.iloc[start_idx:end_idx]
+        
+        # 动态高度
+        fig_height = max(400, len(heatmap_page) * 40)
         
         with st.container(border=True):
-            c_s_kpi, c_s_chart = st.columns([1, 2])
-            with c_s_kpi:
-                st.markdown(f"#### 🏠 {selected_store_dd}")
-                st.metric("总日均杯数", f"{s_day_c:.1f}", f"{s_delta:+.1f} 杯", delta_color="inverse")
-                st.divider()
-                st.markdown("**📋 品类变动详情**")
-                display_tbl = sc_merge[['商品类别', '变动']].sort_values('变动', ascending=False)
-                st.dataframe(display_tbl, column_config={"商品类别": st.column_config.TextColumn("品类"), "变动": st.column_config.NumberColumn("日均变动", format="%+.2f 杯")}, hide_index=True, use_container_width=True, height=200)
-            with c_s_chart:
-                st.markdown("**📊 品类涨跌瀑布图**")
-                if PLOTLY_AVAILABLE:
-                    sc_merge['颜色'] = np.where(sc_merge['变动'] >= 0, '#EF4444', '#10B981')
-                    fig_s = px.bar(sc_merge, y='商品类别', x='变动', text='变动', orientation='h', title=f"{selected_store_dd} - 品类日均变化")
-                    fig_s.update_traces(marker_color=sc_merge['颜色'], texttemplate='%{text:+.2f}')
-                    fig_s = update_chart_layout(fig_s)
-                    st.plotly_chart(fig_s, use_container_width=True)
-                else: st.bar_chart(sc_merge.set_index('商品类别')['变动'])
-    else: st.info("当前无门店数据。")
+            if PLOTLY_AVAILABLE:
+                fig_hm = go.Figure(data=go.Heatmap(
+                    z=heatmap_page.values,
+                    x=heatmap_page.columns,
+                    y=heatmap_page.index,
+                    colorscale=[[0, '#10B981'], [0.5, '#FFFFFF'], [1, '#EF4444']], 
+                    zmid=0,
+                    hovertemplate="门店: %{y}<br>品类: %{x}<br>日均变化: %{z:+.2f}杯<extra></extra>",
+                    xgap=1, ygap=1
+                ))
+                fig_hm.update_layout(
+                    xaxis_title="",
+                    yaxis_title="",
+                    height=fig_height,
+                    xaxis={'side': 'top'},
+                )
+                fig_hm = update_chart_layout(fig_hm)
+                st.plotly_chart(fig_hm, use_container_width=True)
+            else:
+                st.info("需要 Plotly 库来显示热力图")
+                st.dataframe(heatmap_page)
+    else:
+        st.info("当前无门店数据。")
 
-# --- BCG 矩阵 ---
-if saved_cost_path:
+# -----------------------------------------------------------------------------
+# 10. BCG 矩阵
+# -----------------------------------------------------------------------------
+if uploaded_cost:
     st.markdown("### 🧠 智能产品矩阵 (BCG)")
+    
+    # 使用聚合后的数据 (df_chart_data 已经按名称去重)
     matrix_df = df_chart_data.copy()
     matrix_df['毛利率'] = np.where(matrix_df['销售金额']>0, matrix_df['商品毛利']/matrix_df['销售金额'], 0)
     matrix_df['日均销量'] = matrix_df['销售数量'] / days_current
+    
     avg_margin = matrix_df['毛利率'].mean()
     avg_volume = matrix_df['日均销量'].mean()
     
-    # 修复：展开三元表达式以避免Magic打印
     def categorize_product(row):
         if row['日均销量'] >= avg_volume and row['毛利率'] >= avg_margin: return "🌟 明星"
         elif row['日均销量'] >= avg_volume and row['毛利率'] < avg_margin: return "🐮 现金牛"
         elif row['日均销量'] < avg_volume and row['毛利率'] >= avg_margin: return "❓ 潜力股"
         else: return "🐕 瘦狗"
-        
+
     matrix_df['角色'] = matrix_df.apply(categorize_product, axis=1)
     
     c_matrix, c_list = st.columns([3, 2])
@@ -537,7 +729,10 @@ if saved_cost_path:
         with st.container(border=True):
             if PLOTLY_AVAILABLE:
                 matrix_df['毛利率(%)'] = (matrix_df['毛利率'] * 100).round(2)
-                fig_bcg = px.scatter(matrix_df, x="毛利率(%)", y="日均销量", color="角色", hover_name="商品名称", size="销售金额", color_discrete_map={"🌟 明星":COLOR_PALETTE[0], "🐮 现金牛":COLOR_PALETTE[2], "❓ 潜力股":COLOR_PALETTE[4], "🐕 瘦狗":COLOR_PALETTE[3]})
+                fig_bcg = px.scatter(
+                    matrix_df, x="毛利率(%)", y="日均销量", color="角色", hover_name="商品名称", size="销售金额",
+                    color_discrete_map={"🌟 明星":COLOR_PALETTE[0], "🐮 现金牛":COLOR_PALETTE[2], "❓ 潜力股":COLOR_PALETTE[4], "🐕 瘦狗":COLOR_PALETTE[3]}
+                )
                 fig_bcg.add_vline(x=avg_margin*100, line_dash="dash", line_color="#94A3B8", annotation_text="平均毛利率")
                 fig_bcg.add_hline(y=avg_volume, line_dash="dash", line_color="#94A3B8", annotation_text="平均销量")
                 fig_bcg = update_chart_layout(fig_bcg)
@@ -560,39 +755,57 @@ if saved_cost_path:
             else: 
                 st.caption("暂无")
 
-# --- 明细表格 ---
+# -----------------------------------------------------------------------------
+# 11. 明细表格 (去重，智能合并类别)
+# -----------------------------------------------------------------------------
 st.markdown("### 📄 商品明细透视")
-# 聚合逻辑：按商品名称聚合 (强制去重)
-group_cols = ['商品名称']
-if '商品类别' in df_display.columns: group_cols.insert(0, '商品类别')
 
+# 聚合逻辑：按商品名称聚合 (强制去重)
+# 技巧：数值列求和，非数值列(类别)取众数(Mode)或第一个值
 df_view = df_display.groupby('商品名称', as_index=False).agg({
-    '商品类别': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知',
-    '销售数量': 'sum', 
-    '销售金额': 'sum', 
+    '一级分类': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知',
+    '二级分类': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知',
+    '销售数量': 'sum',
+    '销售金额': 'sum',
     '商品毛利': 'sum'
 })
 df_view = df_view.rename(columns={'商品毛利': '商品毛利额'})
+
 df_view['商品毛利率'] = np.where(df_view['销售金额']>0, (df_view['商品毛利额']/df_view['销售金额'] * 100), 0)
 total_rev = df_view['销售金额'].sum()
 df_view['商品销售占比'] = np.where(total_rev>0, (df_view['销售金额']/total_rev * 100), 0)
-conditions = [(df_view['商品毛利率'] >= 99.9), (df_view['商品毛利率'] < 60), (df_view['商品毛利率'] >= 60) & (df_view['商品毛利率'] <= 65)]
+
+# 预警逻辑
+conditions = [
+    (df_view['商品毛利率'] >= 99.9), 
+    (df_view['商品毛利率'] < 60),
+    (df_view['商品毛利率'] >= 60) & (df_view['商品毛利率'] <= 65)
+]
 choices = ['⚠️ 缺成本', '🔴 低毛利', '🟡 毛利预警']
 df_view['健康度'] = np.select(conditions, choices, default='🟢 健康')
+
 df_view = df_view.sort_values('销售数量', ascending=False)
 df_view['序号'] = range(1, len(df_view) + 1)
 df_view = df_view.round(2)
-cols = ['序号', '商品名称', '健康度', '商品类别', '销售数量', '销售金额', '商品毛利额', '商品毛利率', '商品销售占比']
+
+cols = ['序号', '商品名称', '健康度', '一级分类', '二级分类', '销售数量', '销售金额', '商品毛利额', '商品毛利率', '商品销售占比']
 
 with st.container(border=True):
-    st.dataframe(df_view[cols], column_config={
-        "序号": st.column_config.NumberColumn("排名", width="small"),
-        "商品名称": st.column_config.TextColumn("商品名称", help="售卖的商品名称", width="medium"),
-        "健康度": st.column_config.TextColumn("健康预警", width="small", help="基于毛利率的自动诊断"),
-        "商品类别": st.column_config.TextColumn("类别", width="small"),
-        "销售数量": st.column_config.ProgressColumn("销量 (杯)", format="%d", min_value=0, max_value=int(df_view['销售数量'].max())),
-        "销售金额": st.column_config.NumberColumn("销售额", format="¥%.2f"),
-        "商品毛利额": st.column_config.NumberColumn("毛利额", format="¥%.2f"),
-        "商品毛利率": st.column_config.NumberColumn("毛利率", format="%.2f%%", help="<60%标红, 60-65%标黄"),
-        "商品销售占比": st.column_config.NumberColumn("销售占比", format="%.2f%%", help="占总销售额的比例"),
-    }, use_container_width=True, hide_index=True, height=500)
+    st.dataframe(
+        df_view[cols],
+        column_config={
+            "序号": st.column_config.NumberColumn("排名", width="small"),
+            "商品名称": st.column_config.TextColumn("商品名称", help="售卖的商品名称", width="medium"),
+            "健康度": st.column_config.TextColumn("健康预警", width="small", help="基于毛利率的自动诊断"),
+            "一级分类": st.column_config.TextColumn("一级分类", width="small"),
+            "二级分类": st.column_config.TextColumn("二级分类", width="small"),
+            "销售数量": st.column_config.ProgressColumn("销量 (杯)", format="%d", min_value=0, max_value=int(df_view['销售数量'].max())),
+            "销售金额": st.column_config.NumberColumn("销售额", format="¥%.2f"),
+            "商品毛利额": st.column_config.NumberColumn("毛利额", format="¥%.2f"),
+            "商品毛利率": st.column_config.NumberColumn("毛利率", format="%.2f%%", help="<60%标红, 60-65%标黄"),
+            "商品销售占比": st.column_config.NumberColumn("销售占比", format="%.2f%%", help="占总销售额的比例"),
+        },
+        use_container_width=True,
+        hide_index=True,
+        height=500
+    )
