@@ -191,17 +191,13 @@ def merge_cost_data(df_sales, cost_file):
 
 def calculate_metrics(df, operate_days):
     if df.empty or operate_days <= 0: return 0, 0, 0, 0, 0, 0, 0
-    
     qty = df['销售数量'].sum()
     amt = df['销售金额'].sum()
     profit = df['商品毛利'].sum()
-    
     cup_price = (amt / qty) if qty > 0 else 0 
     margin = (profit / amt * 100) if amt > 0 else 0
-    
     daily_qty = qty / operate_days
     daily_amt = amt / operate_days
-    
     return qty, amt, profit, cup_price, margin, daily_qty, daily_amt
 
 # -----------------------------------------------------------------------------
@@ -294,7 +290,6 @@ cur_qty, cur_amt, cur_profit, cur_cup_price, cur_margin, cur_daily_qty, cur_dail
 
 if is_comparison_mode and not df_previous.empty:
     prev_qty, prev_amt, prev_profit, prev_cup_price, prev_margin, prev_daily_qty, prev_daily_amt = calculate_metrics(df_previous, days_previous)
-    
     delta_qty = ((cur_qty - prev_qty) / prev_qty) if prev_qty != 0 else 0
     delta_amt = ((cur_amt - prev_amt) / prev_amt) if prev_amt != 0 else 0
     delta_price = ((cur_cup_price - prev_cup_price) / prev_cup_price) if prev_cup_price != 0 else 0
@@ -416,7 +411,8 @@ if search_products:
                     hover_data={'销售数量':True, '销售金额':':.2f', '商品毛利':':.2f'},
                     title=f"各门店【{', '.join(search_products)[:20]}...】合计销量"
                 )
-                fig_store.update_traces(textposition='outside')
+                # === 修复：柱状图数字强制保留2位小数 ===
+                fig_store.update_traces(textposition='outside', texttemplate='%{text:,.2f}') 
                 fig_height = max(400, len(prod_store_df) * 40)
                 fig_store.update_layout(coloraxis_showscale=False, height=fig_height)
                 fig_store = update_chart_layout(fig_store)
@@ -462,13 +458,10 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 # 8. 图表区域
 # -----------------------------------------------------------------------------
-# 确保定义 df_display
 df_display = df_current.copy()
 
-# 聚合逻辑：确保去重，只按商品名称聚合
+# 聚合去重
 df_chart_data = df_display.groupby('商品名称', as_index=False).agg({'销售数量':'sum', '销售金额':'sum', '商品毛利':'sum'})
-
-# 尝试合并回类别 (取众数) 用于染色
 if '商品类别' in df_display.columns:
     cat_map = df_display.groupby('商品名称')['商品类别'].agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]).reset_index()
     df_chart_data = pd.merge(df_chart_data, cat_map, on='商品名称', how='left')
@@ -485,7 +478,8 @@ with c1:
                 top_sales, y='商品名称', x='销售数量', orientation='h', text='销售数量',
                 color_discrete_sequence=[COLOR_PALETTE[0]]
             )
-            fig.update_traces(textposition='outside')
+            # === 修复：柱状图数字强制保留2位小数 ===
+            fig.update_traces(textposition='outside', texttemplate='%{text:,.2f}')
             fig = update_chart_layout(fig)
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -555,6 +549,7 @@ if is_comparison_mode and '商品类别' in df_current.columns:
     with st.container(border=True):
         if PLOTLY_AVAILABLE:
             fig_diff = px.bar(cat_diff, y='商品类别', x='日均杯数变动', text='日均杯数变动', orientation='h', title="品类日均杯数净增长/减少 (杯)")
+            # === 修复：瀑布图数字强制保留2位小数 ===
             fig_diff.update_traces(marker_color=cat_diff['颜色'], texttemplate='%{text:+.2f}杯')
             fig_diff.update_layout(yaxis={'categoryorder':'total ascending'})
             fig_diff = update_chart_layout(fig_diff)
@@ -564,35 +559,28 @@ if is_comparison_mode and '商品类别' in df_current.columns:
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 9.5 [重构] 🏪 单店品类涨跌透视 (Store Deep Dive)
+# 9.5 [重构] 🏪 单店品类涨跌透视 (Store Deep Dive + 分页)
 # -----------------------------------------------------------------------------
 if is_comparison_mode and '商品类别' in df_current.columns:
     st.markdown("### 🏪 单店品类涨跌透视 (Store Deep Dive)")
     st.caption("选择一家门店，深入分析其各品类的日均销量变化。")
     
-    # 1. 准备所有门店列表
     all_store_list_dd = sorted(df_current['门店名称'].unique().tolist())
     
     if all_store_list_dd:
-        # 2. 门店选择器 (翻页式)
         c_sel, _ = st.columns([1, 2])
         with c_sel:
             selected_store_dd = st.selectbox("👉 请选择要分析的门店", all_store_list_dd)
         
-        # 3. 筛选该店数据
         store_curr = df_current[df_current['门店名称'] == selected_store_dd]
         store_prev = df_previous[df_previous['门店名称'] == selected_store_dd] if not df_previous.empty else pd.DataFrame()
         
-        # 4. 计算该店总日均
         s_qty_c = store_curr['销售数量'].sum()
         s_day_c = s_qty_c / days_current
-        
         s_qty_p = store_prev['销售数量'].sum() if not store_prev.empty else 0
         s_day_p = s_qty_p / days_previous
-        
         s_delta = (s_day_c - s_day_p)
         
-        # 5. 计算该店品类明细
         sc_curr = store_curr.groupby('商品类别', as_index=False)['销售数量'].sum()
         sc_curr['日均'] = sc_curr['销售数量'] / days_current
         
@@ -604,9 +592,8 @@ if is_comparison_mode and '商品类别' in df_current.columns:
             
         sc_merge = pd.merge(sc_curr, sc_prev, on='商品类别', suffixes=('_curr', '_prev'), how='outer').fillna(0)
         sc_merge['变动'] = sc_merge['日均_curr'] - sc_merge['日均_prev']
-        sc_merge = sc_merge.sort_values('变动', ascending=True) # 排序用于图表
+        sc_merge = sc_merge.sort_values('变动', ascending=True) 
         
-        # 6. 渲染 UI
         with st.container(border=True):
             c_s_kpi, c_s_chart = st.columns([1, 2])
             
@@ -615,7 +602,6 @@ if is_comparison_mode and '商品类别' in df_current.columns:
                 st.metric("总日均杯数", f"{s_day_c:.1f}", f"{s_delta:+.1f} 杯", delta_color="inverse")
                 st.divider()
                 st.markdown("**📋 品类变动详情**")
-                # 简单表格展示
                 display_tbl = sc_merge[['商品类别', '变动']].sort_values('变动', ascending=False)
                 st.dataframe(
                     display_tbl, 
@@ -633,14 +619,11 @@ if is_comparison_mode and '商品类别' in df_current.columns:
                 if PLOTLY_AVAILABLE:
                     sc_merge['颜色'] = np.where(sc_merge['变动'] >= 0, '#EF4444', '#10B981')
                     fig_s = px.bar(
-                        sc_merge, 
-                        y='商品类别', 
-                        x='变动', 
-                        text='变动',
-                        orientation='h',
+                        sc_merge, y='商品类别', x='变动', text='变动', orientation='h',
                         title=f"{selected_store_dd} - 品类日均变化"
                     )
-                    fig_s.update_traces(marker_color=sc_merge['颜色'], texttemplate='%{text:+.1f}')
+                    # === 修复：单店透视数字强制保留2位小数 ===
+                    fig_s.update_traces(marker_color=sc_merge['颜色'], texttemplate='%{text:+.2f}')
                     fig_s = update_chart_layout(fig_s)
                     st.plotly_chart(fig_s, use_container_width=True)
                 else:
@@ -656,7 +639,6 @@ st.markdown("---")
 if uploaded_cost:
     st.markdown("### 🧠 智能产品矩阵 (BCG)")
     
-    # 使用聚合后的数据 (df_chart_data 已经按名称去重)
     matrix_df = df_chart_data.copy()
     matrix_df['毛利率'] = np.where(matrix_df['销售金额']>0, matrix_df['商品毛利']/matrix_df['销售金额'], 0)
     matrix_df['日均销量'] = matrix_df['销售数量'] / days_current
@@ -702,7 +684,6 @@ if uploaded_cost:
 # -----------------------------------------------------------------------------
 st.markdown("### 📄 商品明细透视")
 
-# 聚合逻辑：按商品名称聚合 (强制去重)
 df_view = df_display.groupby('商品名称', as_index=False).agg({
     '商品类别': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0] if not x.empty else '未知',
     '销售数量': 'sum',
