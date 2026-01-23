@@ -6,7 +6,7 @@ import math
 import glob
 
 # -----------------------------------------------------------------------------
-# 1. 核心配置与 CSS 注入 (UI 灵魂)
+# 1. 核心配置与 CSS 注入
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="顿角咖啡智能数据看板",
@@ -55,10 +55,9 @@ except ImportError:
 COLOR_PALETTE = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899']
 
 # -----------------------------------------------------------------------------
-# 2. 内置分类字典
+# 2. 内置分类字典 (作为兜底)
 # -----------------------------------------------------------------------------
 CATEGORY_MAPPING_DATA = [
-    # === 咖啡饮品 ===
     {"一级分类": "咖啡饮品", "二级分类": "常规咖啡"},
     {"一级分类": "咖啡饮品", "二级分类": "美式家族"},
     {"一级分类": "咖啡饮品", "二级分类": "奶咖家族"},
@@ -72,7 +71,6 @@ CATEGORY_MAPPING_DATA = [
     {"一级分类": "咖啡饮品", "二级分类": "风味拿铁"},
     {"一级分类": "咖啡饮品", "二级分类": "冰爽果咖"},
     {"一级分类": "咖啡饮品", "二级分类": "中式茶咖"},
-    # === 非咖啡饮品 ===
     {"一级分类": "非咖啡饮品", "二级分类": "原叶轻乳茶"},
     {"一级分类": "非咖啡饮品", "二级分类": "活力酸奶"},
     {"一级分类": "非咖啡饮品", "二级分类": "经典鲜果茶"},
@@ -89,6 +87,7 @@ CATEGORY_MAPPING_DATA = [
 # -----------------------------------------------------------------------------
 DATA_DIR = "data_storage"
 COST_FILE_NAME = "cost_data.xlsx"
+CAT_FILE_NAME = "category_map.xlsx" # 品类表
 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
@@ -97,6 +96,8 @@ def save_uploaded_file(uploaded_file, file_type="sales"):
     if uploaded_file is None: return None
     if file_type == "cost":
         file_path = os.path.join(DATA_DIR, COST_FILE_NAME)
+    elif file_type == "category":
+        file_path = os.path.join(DATA_DIR, CAT_FILE_NAME)
     else:
         file_path = os.path.join(DATA_DIR, uploaded_file.name)
     with open(file_path, "wb") as f:
@@ -105,15 +106,14 @@ def save_uploaded_file(uploaded_file, file_type="sales"):
 
 def get_saved_sales_files():
     files = glob.glob(os.path.join(DATA_DIR, "*"))
-    exclude_files = [COST_FILE_NAME]
+    exclude_files = [COST_FILE_NAME, CAT_FILE_NAME]
     sales_files = [f for f in files if os.path.basename(f) not in exclude_files and (f.endswith('.csv') or f.endswith('.xlsx') or f.endswith('.xls'))]
     sales_files.sort()
     return sales_files
 
 def get_saved_config_file(file_name):
     path = os.path.join(DATA_DIR, file_name)
-    if os.path.exists(path):
-        return path
+    if os.path.exists(path): return path
     return None
 
 # -----------------------------------------------------------------------------
@@ -148,38 +148,54 @@ def process_sales_dataframe(df_sales):
             ).fillna(0)
     return df_sales
 
-# === 分类映射 ===
-def merge_category_map(df_sales):
+# === 关键修复：分类映射 (优先使用上传的表，其次使用内置) ===
+def merge_category_map(df_sales, category_file_path=None):
     if df_sales is None: return None
     
-    # 默认值
-    if '一级分类' not in df_sales.columns:
-        df_sales['一级分类'] = '未分类'
-    if '二级分类' not in df_sales.columns:
-        df_sales['二级分类'] = df_sales['商品类别'] if '商品类别' in df_sales.columns else '未分类'
-
-    if '商品类别' in df_sales.columns:
+    # 1. 确定使用哪个映射源
+    df_cat = None
+    if category_file_path:
+        df_cat = load_data_from_path(category_file_path)
+    
+    # 如果没上传或读取失败，使用内置字典
+    if df_cat is None:
         df_cat = pd.DataFrame(CATEGORY_MAPPING_DATA)
-        df_cat['一级分类'] = df_cat['一级分类'].astype(str).str.strip()
-        df_cat['二级分类'] = df_cat['二级分类'].astype(str).str.strip()
-        df_sales['商品类别'] = df_sales['商品类别'].astype(str).str.strip()
-        
-        # 去重
-        df_cat = df_cat.drop_duplicates(subset=['二级分类'])
-        
-        # 合并
-        df_sales = pd.merge(df_sales, df_cat, left_on='商品类别', right_on='二级分类', how='left', suffixes=('', '_map'))
-        
-        if '一级分类_map' in df_sales.columns:
-             df_sales['一级分类'] = df_sales['一级分类_map'].fillna('未分类')
-        
-        # 二级分类即为原商品类别
-        df_sales['二级分类'] = df_sales['商品类别']
-        
-        # 清理
-        drop_cols = ['一级分类_map', '二级分类_map']
-        df_sales = df_sales.drop(columns=[c for c in drop_cols if c in df_sales.columns], errors='ignore')
 
+    # 2. 清洗映射表
+    if df_cat is not None:
+        # 填充空值
+        df_cat.iloc[:, 0] = df_cat.iloc[:, 0].ffill()
+        
+        # 规范列名: 强制取前两列为 一级, 二级
+        if len(df_cat.columns) >= 2:
+            df_cat = df_cat.iloc[:, :2]
+            df_cat.columns = ['一级分类_map', '二级分类_map']
+            
+            # 字符串清洗
+            df_cat['一级分类_map'] = df_cat['一级分类_map'].astype(str).str.strip()
+            df_cat['二级分类_map'] = df_cat['二级分类_map'].astype(str).str.strip()
+            
+            # 🔥🔥 关键去重：确保每个二级分类只对应一个一级分类，防止数据翻倍 🔥🔥
+            df_cat = df_cat.drop_duplicates(subset=['二级分类_map'])
+            
+            # 3. 合并到销售数据
+            if '商品类别' in df_sales.columns:
+                df_sales['商品类别'] = df_sales['商品类别'].astype(str).str.strip()
+                
+                df_sales = pd.merge(df_sales, df_cat, left_on='商品类别', right_on='二级分类_map', how='left')
+                
+                # 填充分类
+                df_sales['一级分类'] = df_sales['一级分类_map'].fillna('未分类')
+                # 二级分类就用原来的商品类别
+                df_sales['二级分类'] = df_sales['商品类别']
+                
+                # 清理
+                df_sales = df_sales.drop(columns=['一级分类_map', '二级分类_map'])
+            else:
+                # 兼容：如果没商品类别列
+                df_sales['一级分类'] = '未分类'
+                df_sales['二级分类'] = '未分类'
+    
     return df_sales
 
 def merge_cost_data(df_sales, df_cost):
@@ -239,6 +255,25 @@ with st.sidebar.expander("💾 数据仓库管理", expanded=True):
             
     st.divider()
     
+    st.markdown("**🏷️ 品类归纳表**")
+    saved_cat_path = get_saved_config_file(CAT_FILE_NAME)
+    if saved_cat_path:
+        st.success("✅ 已有存档 (可覆盖)")
+        st.caption("使用上传表覆盖内置分类")
+        if st.checkbox("更新品类表?"):
+            new_cat = st.file_uploader("上传一级/二级分类表", type=["xlsx", "csv"])
+            if new_cat:
+                save_uploaded_file(new_cat, "category")
+                st.rerun()
+    else:
+        st.info("ℹ️ 使用内置分类规则")
+        new_cat = st.file_uploader("上传品类表 (可选)", type=["xlsx", "csv"])
+        if new_cat:
+            save_uploaded_file(new_cat, "category")
+            st.rerun()
+
+    st.divider()
+
     st.markdown("**📤 上传销售数据**")
     new_sales = st.file_uploader("支持多选上传", type=["xlsx", "csv"], accept_multiple_files=True)
     if new_sales:
@@ -276,8 +311,12 @@ else:
                 df_cost = load_data_from_path(saved_cost_path)
             df_sales_merged = merge_cost_data(df_sales_merged, df_cost)
             
-            # === 使用内置字典进行分类映射 ===
-            df_final = merge_category_map(df_sales_merged)
+            # 加载分类表 (文件或内置)
+            df_cat_map = None
+            if saved_cat_path:
+                df_cat_map = load_data_from_path(saved_cat_path) # 优先用文件的
+            
+            df_final = merge_category_map(df_sales_merged, saved_cat_path if saved_cat_path else None)
             
             st.sidebar.success(f"已加载 {len(selected_files)} 个周期数据")
         else: df_final = None
@@ -308,7 +347,6 @@ else:
 with st.sidebar.expander("🛠️ 筛选与参数", expanded=True):
     # 1. 门店筛选
     selected_stores = st.multiselect("门店筛选", all_stores, placeholder="默认全选")
-    if selected_stores: st.success(f"✅ 选中 {len(selected_stores)} 家门店")
     
     # 2. 品类筛选
     st.markdown("##### 🏷️ 品类筛选")
@@ -529,10 +567,10 @@ with c2:
                     st.plotly_chart(fig_prod, use_container_width=True)
         else: st.info("请上传成本档案")
 
-# --- 品类涨跌 (日均) - 修改为默认使用二级分类 ---
+# --- 品类涨跌 (日均) - 使用二级分类 ---
 if is_comparison_mode and '二级分类' in df_current.columns:
     st.markdown("### 📈 品类涨跌风向标 (日均杯数变动)")
-    # === 修改：默认使用二级分类 ===
+    # 默认使用二级分类展示
     cat_col = '二级分类'
     
     cat_curr = df_current.groupby(cat_col)['销售数量'].sum().reset_index()
@@ -561,13 +599,13 @@ if is_comparison_mode and '二级分类' in df_current.columns:
 
 st.markdown("---")
 
-# --- 单店透视 (分页) - 修改为默认使用二级分类 ---
+# --- 单店透视 (分页) - 使用二级分类 ---
 if is_comparison_mode and '二级分类' in df_current.columns:
     st.markdown("### 🏪 门店品类涨跌透视 (Store Deep Dive)")
     st.caption("选择一家门店，深入分析其各品类的日均销量变化。")
     all_store_list_dd = sorted(df_current['门店名称'].unique().tolist())
     
-    # === 修改：默认使用二级分类 ===
+    # 默认使用二级分类
     cat_col = '二级分类'
     
     if all_store_list_dd:
