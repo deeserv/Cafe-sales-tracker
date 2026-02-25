@@ -701,16 +701,19 @@ if saved_target_path:
     df_goal = merge_target_data(df_store_stats, df_target)
     
     if df_goal is not None and '达成率' in df_goal.columns:
-        achieved_count = len(df_goal[df_goal['达成状态'].str.contains('达成')])
-        failed_count = len(df_goal[df_goal['达成状态'].str.contains('未达成')])
-        unset_count = len(df_goal[df_goal['达成状态'].str.contains('未设定')])
-        total_stores = len(df_goal)
-        achieved_rate = achieved_count / total_stores if total_stores > 0 else 0
+        # 修复 1：使用精确匹配，防止“未达成”被算入“达成”中
+        achieved_count = len(df_goal[df_goal['达成状态'] == '✅ 达成'])
+        failed_count = len(df_goal[df_goal['达成状态'] == '❌ 未达成'])
+        unset_count = len(df_goal[df_goal['达成状态'].str.contains('未设定', na=False)])
+        
+        # 修复 2：计算有效达成率（分母只算那些设定了目标的门店）
+        valid_stores = achieved_count + failed_count
+        achieved_rate = achieved_count / valid_stores if valid_stores > 0 else 0
         
         g1, g2, g3 = st.columns(3)
         with g1: metric_card("✅ 已达成", achieved_count, None, icon="🎉")
         with g2: metric_card("❌ 未达成", failed_count, None, icon="⚠️")
-        with g3: metric_card("达成率", f"{achieved_rate:.1%}", None, icon="📊")
+        with g3: metric_card("整体达成率", f"{achieved_rate:.1%}", None, icon="📊")
         
         with st.expander("🔍 查看未匹配/数据异常的门店", expanded=False):
             st.markdown("##### 1. 销售表中有，但目标表中没有 (或名字不一致)")
@@ -725,8 +728,13 @@ if saved_target_path:
 
         df_goal = df_goal.sort_values('达成率', ascending=False)
         df_goal['日均杯数'] = df_goal['日均杯数'].round(1)
-        df_goal['差距'] = df_goal['日均目标'] - df_goal['日均杯数']
-        df_goal['差距'] = df_goal['差距'].apply(lambda x: f"差 {x:.1f} 杯" if x > 0 else "🎉 超额")
+        
+        # 修复 3：未设定目标的门店不显示“超额”，正确计算距离目标的杯数
+        def format_gap(row):
+            if '未设定' in str(row['达成状态']): return "-"
+            gap = row['日均目标'] - row['日均杯数']
+            return f"差 {gap:.1f} 杯" if gap > 0 else "🎉 超额"
+        df_goal['差距'] = df_goal.apply(format_gap, axis=1)
         
         with st.container(border=True):
             st.dataframe(df_goal[['门店名称', '日均杯数', '日均目标', '达成率', '达成状态', '差距']], column_config={
