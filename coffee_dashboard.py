@@ -710,10 +710,17 @@ if saved_target_path:
         valid_stores = achieved_count + failed_count
         achieved_rate = achieved_count / valid_stores if valid_stores > 0 else 0
         
-        g1, g2, g3 = st.columns(3)
-        with g1: metric_card("✅ 已达成", achieved_count, None, icon="🎉")
-        with g2: metric_card("❌ 未达成", failed_count, None, icon="⚠️")
-        with g3: metric_card("整体达成率", f"{achieved_rate:.1%}", None, icon="📊")
+        # 新增：计算整体杯数达成率 (只统计设定了有效目标的门店)
+        valid_df = df_goal[df_goal['日均目标'] > 0]
+        total_actual_cups = valid_df['日均杯数'].sum()
+        total_target_cups = valid_df['日均目标'].sum()
+        cup_achieved_rate = total_actual_cups / total_target_cups if total_target_cups > 0 else 0
+        
+        g1, g2, g3, g4 = st.columns(4)
+        with g1: metric_card("✅ 达标门店", f"{achieved_count} 家", None, icon="🎉")
+        with g2: metric_card("门店达标率", f"{achieved_rate:.1%}", None, icon="📊")
+        with g3: metric_card("总杯数达成率", f"{cup_achieved_rate:.1%}", None, icon="☕")
+        with g4: metric_card("❌ 未达标", f"{failed_count} 家", None, icon="⚠️")
         
         with st.expander("🔍 查看未匹配/数据异常的门店", expanded=False):
             st.markdown("##### 1. 销售表中有，但目标表中没有 (或名字不一致)")
