@@ -183,11 +183,16 @@ def load_data_from_path(file_path):
     except Exception as e: st.error(f"读取错误: {e}")
     return None
 
-def process_sales_dataframe(df_sales):
+def process_sales_dataframe(df_sales, file_name=""):
     if df_sales is None: return None
-    df_sales = df_sales.rename(columns={'商品实收': '销售金额', '商品销量': '销售数量'})
     
-    # 剔除合计行
+    # 1. 强力清洗列名 (防止列名带有空格导致无法识别)
+    df_sales.columns = [str(c).strip() for c in df_sales.columns]
+    
+    column_mapping = {'商品实收': '销售金额', '商品销量': '销售数量'}
+    df_sales = df_sales.rename(columns=column_mapping)
+    
+    # 2. 剔除合计行
     if '商品名称' in df_sales.columns:
         df_sales = df_sales[~df_sales['商品名称'].astype(str).str.contains("合计|总计|Total", na=False)]
         df_sales = df_sales.dropna(subset=['商品名称'])
@@ -196,12 +201,24 @@ def process_sales_dataframe(df_sales):
         df_sales = df_sales.dropna(subset=['门店名称'])
         df_sales['门店名称'] = df_sales['门店名称'].apply(clean_store_name)
 
-    # 基础清洗
+    # 3. 基础字符串清洗
     cols = ['商品名称', '商品类别']
     for c in cols: 
         if c in df_sales.columns: df_sales[c] = df_sales[c].astype(str).str.strip()
 
-    if '统计周期' in df_sales.columns: df_sales['统计周期'] = df_sales['统计周期'].ffill()
+    # 4. 统计周期智能解析与兜底 (核心修复点)
+    if '统计周期' not in df_sales.columns and file_name:
+        # 如果根本没有这一列，使用文件名作为周期名 (例如: W6.xlsx -> W6)
+        base_name = os.path.splitext(file_name)[0]
+        df_sales['统计周期'] = base_name
+        
+    if '统计周期' in df_sales.columns:
+        df_sales['统计周期'] = df_sales['统计周期'].astype(str).str.strip()
+        df_sales['统计周期'] = df_sales['统计周期'].replace(['nan', 'NaN', 'None', ''], np.nan).ffill()
+        # 如果填补后还是有空值，再次使用文件名兜底
+        if file_name:
+            df_sales['统计周期'] = df_sales['统计周期'].fillna(os.path.splitext(file_name)[0])
+
     if '门店名称' in df_sales.columns: df_sales['门店名称'] = df_sales['门店名称'].ffill()
     
     for c in ['销售金额', '销售数量']:
@@ -235,10 +252,6 @@ def merge_category_map(df_sales):
     return df_sales
 
 def merge_cost_data(df_sales, df_logistics_cost, df_store_cost):
-    """
-    双毛利系统核心逻辑：
-    合并物流成本与门店成本，分别计算对应的毛利和毛利率。
-    """
     if df_sales is None: return None
     
     df_sales['物流成本'] = 0
@@ -322,9 +335,6 @@ def merge_target_data(df_store_stats, df_target):
     return df_store_stats
 
 def calculate_metrics(df, operate_days):
-    """
-    修改为返回 9 个维度的指标 (支持双毛利)
-    """
     if df.empty or operate_days <= 0: return 0, 0, 0, 0, 0, 0, 0, 0, 0
     qty = df['销售数量'].sum()
     amt = df['销售金额'].sum()
@@ -415,7 +425,7 @@ else:
             fpath = os.path.join(DATA_DIR, fname)
             df = load_data_from_path(fpath)
             if df is not None:
-                df = process_sales_dataframe(df)
+                df = process_sales_dataframe(df, file_name=fname)
                 all_dfs.append(df)
         
         if all_dfs:
@@ -469,8 +479,16 @@ with st.sidebar.expander("🛠️ 筛选与参数", expanded=True):
         enable_comparison = st.checkbox("开启环比分析", value=True)
         if enable_comparison:
             is_comparison_mode = True
-            p_current = st.selectbox("本期", available_periods, index=len(available_periods)-1)
-            p_previous = st.selectbox("上期 (对比)", [p for p in available_periods if p != p_current], index=0)
+            # 增加 key 锁定状态
+            p_current = st.selectbox("本期", available_periods, index=len(available_periods)-1, key="period_current")
+            
+            # 安全降级，防止报错
+            if p_current not in available_periods: p_current = available_periods[-1]
+                
+            prev_options = [p for p in available_periods if p != p_current]
+            if not prev_options: prev_options = available_periods
+            p_previous = st.selectbox("上期 (对比)", prev_options, index=0, key="period_previous")
+            
             c1_day, c2_day = st.columns(2)
             days_current = c1_day.number_input("本期天数", 1, 31, 5)
             days_previous = c2_day.number_input("上期天数", 1, 31, 5)
@@ -497,7 +515,7 @@ if selected_l2:
     df_current = df_current[df_current['二级分类'].isin(selected_l2)]
     if not df_previous.empty: df_previous = df_previous[df_previous['二级分类'].isin(selected_l2)]
 
-# --- 指标解包增加，支持双毛利 ---
+# --- 指标解包 ---
 cur_qty, cur_amt, cur_profit_log, cur_profit_store, cur_cup_price, cur_margin_log, cur_margin_store, cur_daily_qty, cur_daily_amt = calculate_metrics(df_current, days_current)
 
 if is_comparison_mode and not df_previous.empty:
@@ -539,7 +557,7 @@ def metric_card(title, value, delta, prefix="", suffix="", is_percent=False, ico
         st.metric(label_text, f"{prefix}{value}{suffix}", d_str, delta_color="inverse")
 
 st.subheader("📦 核心经营指标")
-# --- 增加一列展示双毛利 ---
+# --- 展示双毛利 ---
 c1, c2, c3, c4 = st.columns(4)
 with c1: metric_card("总销量", int(cur_qty), delta_qty, suffix=" 杯", icon="🛒")
 with c2: metric_card("总营收", f"{cur_amt:,.2f}", delta_amt, prefix="¥", icon="💰")
@@ -598,7 +616,6 @@ with c_left:
 with c_right:
     with st.container(border=True):
         st.markdown("##### 🏆 利润贡献排行")
-        # 增加选择分析维度的选项
         profit_type = st.radio("请选择分析维度：", ["门店毛利", "物流毛利"], horizontal=True, label_visibility="collapsed")
         target_col = profit_type
         
