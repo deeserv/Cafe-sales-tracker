@@ -107,7 +107,8 @@ def update_chart_layout(fig, title_text=""):
 RAW_COLUMN_MAPPING = {
     '商品实收': '销售金额',
     '商品销量': '销售数量',
-    '日期': '统计周期'     # 👈 自动将 CSV 中的"日期"识别为日历引擎的依据
+    '日期': '统计周期',     # 👈 自动将 CSV 中的"日期"识别为日历引擎的依据
+    '商品分类': '商品类别'  # 👈 将原始表的"商品分类"作为识别类别，以便剔除无效商品
 }
 
 CATEGORY_MAPPING_DATA = [
@@ -220,12 +221,25 @@ def ingest_sales_data(uploaded_files):
         
         # 应用自动列名映射
         df.columns = [str(c).strip() for c in df.columns]
+        
+        # ✅ 解决企迈系统重名冲突：如果原表同时存在“商品类别”和“商品分类”，以“商品分类”为准
+        if '商品类别' in df.columns and '商品分类' in df.columns:
+            df = df.drop(columns=['商品类别'])
+            
         df = df.rename(columns=RAW_COLUMN_MAPPING)
         
         # ✅ 终极除垢：去除企迈等收银系统导出的前置反引号(`)和无用空格
         for c in ['商品名称', '商品类别', '门店名称', '统计周期']:
             if c in df.columns:
                 df[c] = df[c].astype(str).str.replace('`', '', regex=False).str.strip()
+                
+        # 🚫 核心拦截门：只要没有配置一级分类（即不在内置字典里的商品），直接丢弃，不读取入库！
+        valid_categories = set([item["二级分类"] for item in CATEGORY_MAPPING_DATA])
+        if '商品类别' in df.columns:
+            df = df[df['商品类别'].isin(valid_categories)]
+        
+        # 如果过滤完之后，这张表变空了，直接跳过
+        if df.empty: continue 
         
         if '商品名称' in df.columns:
             df = df[~df['商品名称'].astype(str).str.contains("合计|总计|Total", na=False)]
