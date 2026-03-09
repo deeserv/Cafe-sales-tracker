@@ -569,11 +569,15 @@ if app_mode == "📊 经营分析看板":
     choices = ['⚠️ 未配配方', '🔴 低毛利', '🟡 预警']
     df_view['健康度'] = np.select(conditions, choices, default='🟢 健康')
 
+    # 👇 新增：安全计算最大销量，防止因退款(负数)或空数据导致的页面崩溃
+    max_sales_val = df_view['销售数量'].max()
+    safe_max_sales = int(max_sales_val) if pd.notna(max_sales_val) and max_sales_val > 0 else 1
+
     cols = ['序号', '商品名称', '规格', '做法', 'BCG矩阵', '健康度', '二级分类', '销售数量', '销售金额', '物流单位成本', '物流毛利率', '门店单位成本', '门店毛利率', '销售占比']
     with st.container(border=True):
         st.dataframe(df_view[cols], column_config={
             "序号": st.column_config.NumberColumn("排名", width="small"),
-            "销售数量": st.column_config.ProgressColumn("总销量", format="%d", min_value=0, max_value=int(df_view['销售数量'].max())),
+            "销售数量": st.column_config.ProgressColumn("总销量", format="%d", min_value=0, max_value=safe_max_sales),
             "销售金额": st.column_config.NumberColumn("营收", format="¥%.2f"),
             "物流单位成本": st.column_config.NumberColumn("物流配方成本", format="¥%.2f"),
             "物流毛利率": st.column_config.NumberColumn("物流毛利率", format="%.2f%%"),
