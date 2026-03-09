@@ -6,14 +6,8 @@ import os
 import math
 import glob
 import re
+import sqlite3
 from datetime import datetime, date
-
-# 尝试导入云端数据库核心库
-try:
-    from sqlalchemy import create_engine, text
-except ImportError:
-    st.error("❌ 缺少云数据库驱动！请在云端配置 requirements.txt")
-    st.stop()
 
 # -----------------------------------------------------------------------------
 # 1. 核心配置与 CSS 注入 (精装 UI 升级版)
@@ -140,35 +134,37 @@ PROJECT_STORE_MAPPING = {
 }
 
 # -----------------------------------------------------------------------------
-# 3. ☁️ 云端 PostgreSQL 数据库引擎 (Supabase)
+# 3. 💾 本地 SQLite 数据库系统 (已移除 Supabase)
 # -----------------------------------------------------------------------------
-# 👇 【重要】请将下面引号内的链接，替换为您带 6543 端口的真实链接。
-# 必须保留 "postgresql://..." 这个合法格式结构，否则会报错 ArgumentError。
-FALLBACK_DB_URI = "postgresql://postgres:[Bccoffee888@!#]@db.xzqttgmxtkiwrdvduqyg.supabase.co:5432/postgres"
+DATA_DIR = "data_storage"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
-@st.cache_resource
-def init_engine():
-    try:
-        DB_URI = st.secrets["DATABASE_URL"]
-    except:
-        DB_URI = FALLBACK_DB_URI
-    return create_engine(DB_URI, pool_pre_ping=True)
+DB_PATH = os.path.join(DATA_DIR, "coffee_master.db")
+
+def get_db_conn():
+    """获取本地 SQLite 数据库连接"""
+    return sqlite3.connect(DB_PATH)
 
 def init_db():
-    engine = init_engine()
-    with engine.begin() as conn:
-        conn.execute(text('''
-            CREATE TABLE IF NOT EXISTS sales_raw (
-                门店名称 TEXT,
-                商品名称 TEXT,
-                商品类别 TEXT,
-                统计周期 TEXT,
-                销售金额 REAL,
-                销售数量 REAL,
-                source_file TEXT
-            )
-        '''))
+    """初始化数据库表结构 (如果不存在)"""
+    conn = get_db_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sales_raw (
+            门店名称 TEXT,
+            商品名称 TEXT,
+            商品类别 TEXT,
+            统计周期 TEXT,
+            销售金额 REAL,
+            销售数量 REAL,
+            source_file TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
+# 启动时确保数据库存在
 init_db()
 
 # -----------------------------------------------------------------------------
@@ -205,14 +201,14 @@ def load_data_from_buffer(uploaded_file):
     return None
 
 def ingest_sales_data(uploaded_files):
-    engine = init_engine()
+    conn = get_db_conn()
     success_count = 0
     skip_count = 0
     
     for f in uploaded_files:
         file_name = f.name
         try:
-            existing = pd.read_sql(text("SELECT COUNT(*) as cnt FROM sales_raw WHERE source_file = :fname"), engine, params={"fname": file_name})
+            existing = pd.read_sql("SELECT COUNT(*) as cnt FROM sales_raw WHERE source_file = ?", conn, params=(file_name,))
             if existing.iloc[0]['cnt'] > 0:
                 st.toast(f"文件 '{file_name}' 已存在，跳过导入。", icon="⚠️")
                 skip_count += 1
@@ -252,30 +248,38 @@ def ingest_sales_data(uploaded_files):
             if col not in df.columns: df[col] = None
                 
         try:
-            df[keep_cols].to_sql('sales_raw', engine, if_exists='append', index=False)
+            df[keep_cols].to_sql('sales_raw', conn, if_exists='append', index=False)
             success_count += 1
         except Exception as e: st.error(f"写入数据库失败: {e}")
         
-    if success_count > 0: st.success(f"✅ 成功将 {success_count} 份日报导入云端！")
+    conn.close()
+    if success_count > 0: st.success(f"✅ 成功将 {success_count} 份日报存入本地数据库！")
 
 def ingest_config_data(uploaded_file, table_name):
     if uploaded_file is None: return
     df = load_data_from_buffer(uploaded_file)
     if df is not None:
-        engine = init_engine()
+        conn = get_db_conn()
         try:
-            df.to_sql(table_name, engine, if_exists='replace', index=False)
-            st.success(f"✅ 云端档案更新成功！")
+            df.to_sql(table_name, conn, if_exists='replace', index=False)
+            st.success(f"✅ 本地档案更新成功！")
             st.rerun()
         except: pass
+        finally:
+            conn.close()
 
 # -----------------------------------------------------------------------------
 # 4.5 读取配置与加工逻辑
 # -----------------------------------------------------------------------------
 def get_config_df_from_db(table_name):
-    engine = init_engine()
-    try: return pd.read_sql(f"SELECT * FROM {table_name}", engine)
-    except: return None
+    conn = get_db_conn()
+    try: 
+        df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
+        conn.close()
+        return df
+    except: 
+        conn.close()
+        return None
 
 def merge_category_map(df_sales):
     if df_sales is None or df_sales.empty: return df_sales
@@ -387,42 +391,44 @@ else: st.sidebar.image("https://cdn-icons-png.flaticon.com/512/751/751621.png", 
 
 st.sidebar.markdown("## 顿角咖啡智能数据看板")
 
-with st.sidebar.expander("☁️ 云端数据库管理", expanded=True):
-    engine = init_engine()
+with st.sidebar.expander("💾 本地数据库管理", expanded=True):
+    conn = get_db_conn()
     try:
-        total_rows = pd.read_sql("SELECT COUNT(*) as c FROM sales_raw", engine).iloc[0]['c']
-        df_periods_db = pd.read_sql("SELECT DISTINCT 统计周期 FROM sales_raw WHERE 统计周期 IS NOT NULL", engine)
+        total_rows = pd.read_sql("SELECT COUNT(*) as c FROM sales_raw", conn).iloc[0]['c']
+        df_periods_db = pd.read_sql("SELECT DISTINCT 统计周期 FROM sales_raw WHERE 统计周期 IS NOT NULL", conn)
         available_periods = sorted(df_periods_db['统计周期'].tolist())
     except:
         total_rows = 0; available_periods = []
+    finally:
+        conn.close()
     
-    st.markdown(f"<div style='background-color:#EFF6FF; padding:10px; border-radius:8px; margin-bottom:15px; text-align:center;'><b style='color:#1E40AF'>☁️ 云端已存 {total_rows:,} 条记录</b></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='background-color:#EFF6FF; padding:10px; border-radius:8px; margin-bottom:15px; text-align:center;'><b style='color:#1E40AF'>💾 本地已存 {total_rows:,} 条记录</b></div>", unsafe_allow_html=True)
     
     st.markdown("**📤 导入新营业日结表**")
     new_sales = st.file_uploader("支持按天批量上传", type=["xlsx", "csv"], accept_multiple_files=True)
     if new_sales: ingest_sales_data(new_sales); st.rerun()
         
     st.divider()
-    st.markdown("**🚚 更新物流成本 (云端)**")
+    st.markdown("**🚚 更新物流成本 (本地)**")
     df_log_cost_check = get_config_df_from_db("cost_logistics")
-    if df_log_cost_check is not None: st.caption("✅ 云端已配置")
+    if df_log_cost_check is not None: st.caption("✅ 已配置")
     new_log_cost = st.file_uploader("上传物流成本表", type=["xlsx", "csv"], key="log_up")
     if new_log_cost: ingest_config_data(new_log_cost, "cost_logistics")
 
-    st.markdown("**🏪 更新门店成本 (云端)**")
+    st.markdown("**🏪 更新门店成本 (本地)**")
     df_store_cost_check = get_config_df_from_db("cost_store")
-    if df_store_cost_check is not None: st.caption("✅ 云端已配置")
+    if df_store_cost_check is not None: st.caption("✅ 已配置")
     new_store_cost = st.file_uploader("上传门店成本表", type=["xlsx", "csv"], key="store_up")
     if new_store_cost: ingest_config_data(new_store_cost, "cost_store")
             
-    st.markdown("**🎯 更新门店目标 (云端)**")
+    st.markdown("**🎯 更新门店目标 (本地)**")
     df_target_check = get_config_df_from_db("target_store")
-    if df_target_check is not None: st.caption("✅ 云端已配置")
+    if df_target_check is not None: st.caption("✅ 已配置")
     new_target = st.file_uploader("上传目标表", type=["xlsx", "csv"], key="tar_up")
     if new_target: ingest_config_data(new_target, "target_store")
 
 if total_rows == 0:
-    st.markdown("<div style='text-align:center;padding:100px;'><h1>☁️ 欢迎接入云端系统</h1><p>云端数据库目前为空，请在左侧上传数据。</p></div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align:center;padding:100px;'><h1>💾 欢迎进入本地开发模式</h1><p>本地数据库目前为空，请在左侧上传数据进行调试。</p></div>", unsafe_allow_html=True)
     st.stop()
 
 # -----------------------------------------------------------------------------
@@ -442,6 +448,8 @@ try:
     for p in available_periods: parsed_dates.append(datetime.strptime(p, '%Y-%m-%d').date())
     is_date_mode = True
 except: pass
+
+conn = get_db_conn()
 
 if is_date_mode and len(parsed_dates) > 0:
     # 🌟 触发高级日历模式
@@ -465,14 +473,14 @@ if is_date_mode and len(parsed_dates) > 0:
         else: start_p = end_p = date_prev[0]
         days_previous = (end_p - start_p).days + 1
         
-        df_current = pd.read_sql(text("SELECT * FROM sales_raw WHERE 统计周期 >= :start AND 统计周期 <= :end"), engine, params={"start": start_c.strftime('%Y-%m-%d'), "end": end_c.strftime('%Y-%m-%d')})
-        df_previous = pd.read_sql(text("SELECT * FROM sales_raw WHERE 统计周期 >= :start AND 统计周期 <= :end"), engine, params={"start": start_p.strftime('%Y-%m-%d'), "end": end_p.strftime('%Y-%m-%d')})
+        df_current = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_c.strftime('%Y-%m-%d'), end_c.strftime('%Y-%m-%d')))
+        df_previous = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_p.strftime('%Y-%m-%d'), end_p.strftime('%Y-%m-%d')))
     else:
         date_curr = st.sidebar.date_input("选择汇总时间段", [min_d, max_d], min_value=min_d, max_value=max_d, key="dc_single")
         if len(date_curr) == 2: start_c, end_c = date_curr
         else: start_c = end_c = date_curr[0]
         days_current = (end_c - start_c).days + 1
-        df_current = pd.read_sql(text("SELECT * FROM sales_raw WHERE 统计周期 >= :start AND 统计周期 <= :end"), engine, params={"start": start_c.strftime('%Y-%m-%d'), "end": end_c.strftime('%Y-%m-%d')})
+        df_current = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_c.strftime('%Y-%m-%d'), end_c.strftime('%Y-%m-%d')))
 
 else:
     # 退化为传统文本选择模式
@@ -485,14 +493,16 @@ else:
             c1_day, c2_day = st.sidebar.columns(2)
             days_current = c1_day.number_input("本期天数", 1, 31, 5)
             days_previous = c2_day.number_input("上期天数", 1, 31, 5)
-            df_current = pd.read_sql(text("SELECT * FROM sales_raw WHERE 统计周期 = :p"), engine, params={"p": p_current})
-            df_previous = pd.read_sql(text("SELECT * FROM sales_raw WHERE 统计周期 = :p"), engine, params={"p": p_previous})
+            df_current = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 = ?", conn, params=(p_current,))
+            df_previous = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 = ?", conn, params=(p_previous,))
         else:
             selected_periods = st.sidebar.multiselect("多选汇总", available_periods, default=available_periods[-1:])
             days_current = st.sidebar.number_input("营业天数", 1, 100, 5)
             if selected_periods:
-                p_str = "','".join([str(p).replace("'", "''") for p in selected_periods])
-                df_current = pd.read_sql(text(f"SELECT * FROM sales_raw WHERE 统计周期 IN ('{p_str}')"), engine)
+                placeholders = ','.join(['?'] * len(selected_periods))
+                df_current = pd.read_sql(f"SELECT * FROM sales_raw WHERE 统计周期 IN ({placeholders})", conn, params=selected_periods)
+
+conn.close()
 
 # --- 补充加工逻辑 ---
 df_log_cost = get_config_df_from_db("cost_logistics")
