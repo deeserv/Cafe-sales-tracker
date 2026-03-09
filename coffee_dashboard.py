@@ -453,66 +453,54 @@ days_current = 1; days_previous = 1
 st.sidebar.markdown("---")
 st.sidebar.subheader("📅 自由日历分析")
 
-# 检测是否是纯日期格式数据
-is_date_mode = False
-parsed_dates = []
-try:
-    for p in available_periods: parsed_dates.append(datetime.strptime(p, '%Y-%m-%d').date())
-    is_date_mode = True
-except: pass
-
 conn = get_db_conn()
 
-if is_date_mode and len(parsed_dates) > 0:
-    # 🌟 触发高级日历模式
-    min_d, max_d = min(parsed_dates), max(parsed_dates)
-    
-    enable_comparison = st.sidebar.checkbox("开启环比对比", value=False)
-    if enable_comparison:
-        is_comparison_mode = True
-        st.sidebar.markdown("##### 本期时间段")
-        date_curr = st.sidebar.date_input("选择范围", [max_d, max_d], min_value=min_d, max_value=max_d, key="dc")
-        st.sidebar.markdown("##### 上期 (对比) 时间段")
-        date_prev = st.sidebar.date_input("选择范围", [min_d, min_d], min_value=min_d, max_value=max_d, key="dp")
+if available_periods:
+    # 🌟 强制启用高级日历模式，隐藏文件名
+    parsed_dates = []
+    for p in available_periods:
+        try: parsed_dates.append(datetime.strptime(p, '%Y-%m-%d').date())
+        except: pass
         
-        # 解析本期
-        if len(date_curr) == 2: start_c, end_c = date_curr
-        else: start_c = end_c = date_curr[0]
-        days_current = (end_c - start_c).days + 1  
+    if parsed_dates:
+        min_d, max_d = min(parsed_dates), max(parsed_dates)
         
-        # 解析上期
-        if len(date_prev) == 2: start_p, end_p = date_prev
-        else: start_p = end_p = date_prev[0]
-        days_previous = (end_p - start_p).days + 1
+        # 提示当前数据库存在的时间跨度
+        st.sidebar.markdown(f"<div style='font-size:13px; color:#64748B; margin-bottom:10px;'>💡 数据库已有数据范围: {min_d.strftime('%m/%d')} 至 {max_d.strftime('%m/%d')}</div>", unsafe_allow_html=True)
         
-        df_current = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_c.strftime('%Y-%m-%d'), end_c.strftime('%Y-%m-%d')))
-        df_previous = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_p.strftime('%Y-%m-%d'), end_p.strftime('%Y-%m-%d')))
-    else:
-        date_curr = st.sidebar.date_input("选择汇总时间段", [min_d, max_d], min_value=min_d, max_value=max_d, key="dc_single")
-        if len(date_curr) == 2: start_c, end_c = date_curr
-        else: start_c = end_c = date_curr[0]
-        days_current = (end_c - start_c).days + 1
-        df_current = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_c.strftime('%Y-%m-%d'), end_c.strftime('%Y-%m-%d')))
-
-else:
-    # 退化为传统文本选择模式
-    if len(available_periods) >= 2:
-        enable_comparison = st.sidebar.checkbox("开启环比对比", value=True)
+        enable_comparison = st.sidebar.checkbox("开启环比对比", value=False)
         if enable_comparison:
             is_comparison_mode = True
-            p_current = st.sidebar.selectbox("本期", available_periods, index=len(available_periods)-1)
-            p_previous = st.sidebar.selectbox("上期", available_periods, index=0)
-            c1_day, c2_day = st.sidebar.columns(2)
-            days_current = c1_day.number_input("本期天数", 1, 31, 5)
-            days_previous = c2_day.number_input("上期天数", 1, 31, 5)
-            df_current = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 = ?", conn, params=(p_current,))
-            df_previous = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 = ?", conn, params=(p_previous,))
+            st.sidebar.markdown("##### 本期时间段")
+            date_curr = st.sidebar.date_input("选择范围", [max_d, max_d], min_value=min_d, max_value=max_d, key="dc")
+            st.sidebar.markdown("##### 上期 (对比) 时间段")
+            date_prev = st.sidebar.date_input("选择范围", [min_d, min_d], min_value=min_d, max_value=max_d, key="dp")
+            
+            # 解析本期
+            start_c = date_curr[0] if len(date_curr) > 0 else max_d
+            end_c = date_curr[1] if len(date_curr) == 2 else start_c
+            
+            # 解析上期
+            start_p = date_prev[0] if len(date_prev) > 0 else min_d
+            end_p = date_prev[1] if len(date_prev) == 2 else start_p
+            
+            # 从数据库提取，自然合并所有项目的数据！
+            df_current = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_c.strftime('%Y-%m-%d'), end_c.strftime('%Y-%m-%d')))
+            df_previous = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_p.strftime('%Y-%m-%d'), end_p.strftime('%Y-%m-%d')))
+            
+            # 【智能实际天数】不管框选了几天，只算数据库里真正有数据的天数
+            days_current = df_current['统计周期'].nunique() if not df_current.empty else 1
+            days_previous = df_previous['统计周期'].nunique() if not df_previous.empty else 1
         else:
-            selected_periods = st.sidebar.multiselect("多选汇总", available_periods, default=available_periods[-1:])
-            days_current = st.sidebar.number_input("营业天数", 1, 100, 5)
-            if selected_periods:
-                placeholders = ','.join(['?'] * len(selected_periods))
-                df_current = pd.read_sql(f"SELECT * FROM sales_raw WHERE 统计周期 IN ({placeholders})", conn, params=selected_periods)
+            date_curr = st.sidebar.date_input("选择汇总时间段", [min_d, max_d], min_value=min_d, max_value=max_d, key="dc_single")
+            start_c = date_curr[0] if len(date_curr) > 0 else min_d
+            end_c = date_curr[1] if len(date_curr) == 2 else start_c
+            
+            df_current = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(start_c.strftime('%Y-%m-%d'), end_c.strftime('%Y-%m-%d')))
+            # 【智能实际天数】
+            days_current = df_current['统计周期'].nunique() if not df_current.empty else 1
+else:
+    st.sidebar.info("请在上方上传日结表激活日历功能")
 
 conn.close()
 
@@ -579,11 +567,11 @@ st.image("https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=form
 c_title, c_period = st.columns([2, 1])
 with c_title: st.title("📊 顿角咖啡智能数据看板")
 with c_period:
-    if is_date_mode:
-        period_str = f"{start_c.strftime('%m/%d')} - {end_c.strftime('%m/%d')} ({days_current}天)"
+    if available_periods and 'start_c' in locals():
+        period_str = f"{start_c.strftime('%m/%d')} - {end_c.strftime('%m/%d')} ({days_current}天有效)"
         if is_comparison_mode: period_str += f" vs {start_p.strftime('%m/%d')}-{end_p.strftime('%m/%d')}"
     else:
-        period_str = "已选定范围"
+        period_str = "暂无数据"
     st.markdown(f"<div style='text-align:right; padding-top:10px; color:#64748B;'><b>分析范围</b><br><span style='color:#3B82F6; font-size:1.1em'>{period_str}</span></div>", unsafe_allow_html=True)
 st.markdown("---")
 
