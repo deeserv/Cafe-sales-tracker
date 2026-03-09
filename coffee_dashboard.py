@@ -605,22 +605,39 @@ elif app_mode == "⚙️ 成本与配方中心":
             df_raw_up = load_data_from_buffer(raw_file)
             if df_raw_up is not None:
                 df_raw_up.columns = [str(c).strip() for c in df_raw_up.columns]
+                
+                # ✅ 升级版防重名识别：每个目标列只允许匹配一次
                 col_map = {}
+                found = {'物料名称': False, '单位': False, '物流单价': False, '顿角单价': False, '百度单价': False}
+                
                 for c in df_raw_up.columns:
-                    if '物料' in c or '原料' in c or '产品' in c: col_map[c] = '物料名称'
-                    if '单位' in c: col_map[c] = '单位'
-                    # 智能识别三种价格列
-                    if '物流' in c: col_map[c] = '物流单价'
-                    elif '顿角' in c: col_map[c] = '顿角单价'
-                    elif '百度' in c: col_map[c] = '百度单价'
+                    if not found['物料名称'] and any(kw in c for kw in ['物料', '原料', '产品']):
+                        col_map[c] = '物料名称'; found['物料名称'] = True
+                    elif not found['单位'] and '单位' in c:
+                        col_map[c] = '单位'; found['单位'] = True
+                    elif not found['物流单价'] and '物流' in c:
+                        col_map[c] = '物流单价'; found['物流单价'] = True
+                    elif not found['顿角单价'] and '顿角' in c:
+                        col_map[c] = '顿角单价'; found['顿角单价'] = True
+                    elif not found['百度单价'] and '百度' in c:
+                        col_map[c] = '百度单价'; found['百度单价'] = True
                 
                 df_raw_up = df_raw_up.rename(columns=col_map)
                 
                 if '物料名称' in df_raw_up.columns:
+                    # 终极防护：如果依然有多列重名变成了DataFrame，强制只取第一列
+                    if isinstance(df_raw_up['物料名称'], pd.DataFrame): df_raw_up['物料名称'] = df_raw_up['物料名称'].iloc[:, 0]
+                    
                     df_raw_up['单位'] = df_raw_up.get('单位', '未知')
-                    # 如果缺失某项单价，默认用 0 兜底
+                    if isinstance(df_raw_up['单位'], pd.DataFrame): df_raw_up['单位'] = df_raw_up['单位'].iloc[:, 0]
+                    
+                    # 如果缺失某项单价，默认用 0 兜底，并强制转换为纯数字
                     for price_col in ['物流单价', '顿角单价', '百度单价']:
-                        if price_col not in df_raw_up.columns: df_raw_up[price_col] = 0.0
+                        if price_col not in df_raw_up.columns: 
+                            df_raw_up[price_col] = 0.0
+                        else:
+                            if isinstance(df_raw_up[price_col], pd.DataFrame):
+                                df_raw_up[price_col] = df_raw_up[price_col].iloc[:, 0]
                         df_raw_up[price_col] = pd.to_numeric(df_raw_up[price_col], errors='coerce').fillna(0)
                         
                     conn = get_db_conn()
