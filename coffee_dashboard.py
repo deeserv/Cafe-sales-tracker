@@ -12,7 +12,7 @@ from datetime import datetime, date
 try:
     from sqlalchemy import create_engine, text
 except ImportError:
-    st.error("❌ 缺少云数据库驱动！请在终端运行: `pip install sqlalchemy psycopg2-binary`")
+    st.error("❌ 缺少云数据库驱动！请在云端配置 requirements.txt")
     st.stop()
 
 # -----------------------------------------------------------------------------
@@ -109,10 +109,11 @@ def update_chart_layout(fig, title_text=""):
 # -----------------------------------------------------------------------------
 # 2. 内置字典与 ETL 翻译规则
 # -----------------------------------------------------------------------------
+# 🤖【免加工清洗字典】精准匹配您的 CSV 原始导出数据
 RAW_COLUMN_MAPPING = {
     '商品实收': '销售金额',
     '商品销量': '销售数量',
-    '日期': '统计周期',  # ✅ 自动把原表的"日期"列识别为您要的日历时间
+    '日期': '统计周期'     # 👈 自动将 CSV 中的"日期"识别为日历引擎的依据
 }
 
 CATEGORY_MAPPING_DATA = [
@@ -141,8 +142,9 @@ PROJECT_STORE_MAPPING = {
 # -----------------------------------------------------------------------------
 # 3. ☁️ 云端 PostgreSQL 数据库引擎 (Supabase)
 # -----------------------------------------------------------------------------
-# 👇 【极其重要】替换为您真实的密码！(请粘贴带有 6543 端口的 IPv4 链接)
-FALLBACK_DB_URI = "您刚刚复制的新链接，记得替换掉 [YOUR-PASSWORD]"
+# 👇 【重要】请将下面引号内的链接，替换为您带 6543 端口的真实链接。
+# 必须保留 "postgresql://..." 这个合法格式结构，否则会报错 ArgumentError。
+FALLBACK_DB_URI = "postgresql://postgres:[Bccoffee888@!#]@db.xzqttgmxtkiwrdvduqyg.supabase.co:5432/postgres"
 
 @st.cache_resource
 def init_engine():
@@ -220,13 +222,14 @@ def ingest_sales_data(uploaded_files):
         df = load_data_from_buffer(f)
         if df is None: continue
         
+        # 应用自动列名映射
         df.columns = [str(c).strip() for c in df.columns]
         df = df.rename(columns=RAW_COLUMN_MAPPING)
         
-        # ✅ 增加强力清洗：消除收银系统导出的隐藏特殊符号 (反引号 `) 和多余空格
+        # ✅ 终极除垢：去除企迈等收银系统导出的前置反引号(`)和无用空格
         for c in ['商品名称', '商品类别', '门店名称', '统计周期']:
             if c in df.columns:
-                df[c] = df[c].astype(str).str.replace('`', '').str.strip()
+                df[c] = df[c].astype(str).str.replace('`', '', regex=False).str.strip()
         
         if '商品名称' in df.columns:
             df = df[~df['商品名称'].astype(str).str.contains("合计|总计|Total", na=False)]
@@ -393,7 +396,7 @@ with st.sidebar.expander("☁️ 云端数据库管理", expanded=True):
     except:
         total_rows = 0; available_periods = []
     
-    st.markdown(f"<div style='background-color:#EFF6FF; padding:10px; border-radius:8px; margin-bottom:15px; text-align:center;'><b style='color:#1E40AF'>☁️ 云端已存 {total_rows:,} 条日结</b></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='background-color:#EFF6FF; padding:10px; border-radius:8px; margin-bottom:15px; text-align:center;'><b style='color:#1E40AF'>☁️ 云端已存 {total_rows:,} 条记录</b></div>", unsafe_allow_html=True)
     
     st.markdown("**📤 导入新营业日结表**")
     new_sales = st.file_uploader("支持按天批量上传", type=["xlsx", "csv"], accept_multiple_files=True)
