@@ -427,6 +427,18 @@ with st.sidebar.expander("💾 本地数据库管理", expanded=True):
     new_target = st.file_uploader("上传目标表", type=["xlsx", "csv"], key="tar_up")
     if new_target: ingest_config_data(new_target, "target_store")
 
+    # 👇 这是新增的清空数据功能
+    st.divider()
+    st.markdown("**⚠️ 危险操作**")
+    if st.button("🗑️ 清空所有销售数据", use_container_width=True):
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM sales_raw") # 清空表数据
+        conn.commit()
+        conn.close()
+        st.success("✅ 销售数据已全部清空！请重新上传。")
+        st.rerun()
+
 if total_rows == 0:
     st.markdown("<div style='text-align:center;padding:100px;'><h1>💾 欢迎进入本地开发模式</h1><p>本地数据库目前为空，请在左侧上传数据进行调试。</p></div>", unsafe_allow_html=True)
     st.stop()
