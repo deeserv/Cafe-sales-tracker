@@ -647,18 +647,24 @@ elif app_mode == "⚙️ 成本与配方中心":
         
         # ✅ 解决空值导致无法选择的问题：对空值进行强制 '常规' 填充
         try: 
-            df_opts = pd.read_sql("SELECT DISTINCT 门店名称, 商品名称, 规格, 做法 FROM sales_raw", conn)
+            # 🎯 新增：多提取一列 "商品类别"，用于稍后做分类判断
+            df_opts = pd.read_sql("SELECT DISTINCT 门店名称, 商品名称, 商品类别, 规格, 做法 FROM sales_raw", conn)
             df_opts['规格'] = df_opts['规格'].fillna('常规').astype(str)
             df_opts['做法'] = df_opts['做法'].fillna('常规').astype(str)
             df_opts['商品名称'] = df_opts['商品名称'].fillna('未知').astype(str)
             df_opts['门店名称'] = df_opts['门店名称'].fillna('未知').astype(str)
+            
+            # 🎯 新增拦截机制：调用分类引擎，只要没有一级分类（即等于'未分类'）的商品，直接屏蔽不显示！
+            df_opts = merge_category_map(df_opts)
+            df_opts = df_opts[df_opts['一级分类'] != '未分类']
+            
         except: df_opts = pd.DataFrame()
         
         try: raw_mat_list = pd.read_sql("SELECT 物料名称 FROM raw_materials", conn)['物料名称'].tolist()
         except: raw_mat_list = []
         
         if df_opts.empty: 
-            st.warning("请先在看板导入企迈销售日结报表以获取商品目录。")
+            st.warning("请先在看板导入企迈销售日结报表以获取商品目录。或当前报表中没有符合一级分类的饮品。")
         elif not raw_mat_list: 
             st.warning("请先在【第一步】上传原物料价格档案！")
         else:
