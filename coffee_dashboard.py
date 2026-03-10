@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta
 
 # -----------------------------------------------------------------------------
-# 1. 核心配置与 CSS 注入 (布局与显示优化)
+# 1. 核心配置与 CSS 注入 (全功能精装版)
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="顿角咖啡智能经营系统",
@@ -111,11 +111,6 @@ def init_db():
     cursor.execute('''CREATE TABLE IF NOT EXISTS sales_raw (门店名称 TEXT, 商品名称 TEXT, 商品类别 TEXT, 规格 TEXT, 做法 TEXT, 统计周期 TEXT, 销售金额 REAL, 销售数量 REAL, source_file TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS raw_materials (物料名称 TEXT PRIMARY KEY, 品项类别 TEXT, 单位 TEXT, 物流单价 REAL, 顿角单价 REAL, 百度单价 REAL)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS bom_recipes (配方类型 TEXT, 适用范围 TEXT, 商品名称 TEXT, 规格 TEXT, 做法 TEXT, 物料名称 TEXT, 用量 REAL, UNIQUE(配方类型, 适用范围, 商品名称, 规格, 做法, 物料名称))''')
-    # 强力纠偏：清除所有 0/None 占位符
-    cursor.execute("UPDATE sales_raw SET 规格 = '常规' WHERE 规格 IN ('0', 'nan', 'None', '', 'NaN', '0/0')")
-    cursor.execute("UPDATE sales_raw SET 做法 = '常规' WHERE 做法 IN ('0', 'nan', 'None', '', 'NaN', '0/0')")
-    cursor.execute("UPDATE bom_recipes SET 规格 = '常规' WHERE 规格 IN ('0', 'nan', 'None', '', 'NaN', '0/0')")
-    cursor.execute("UPDATE bom_recipes SET 做法 = '常规' WHERE 做法 IN ('0', 'nan', 'None', '', 'NaN', '0/0')")
     conn.commit(); conn.close()
 
 init_db()
@@ -136,7 +131,7 @@ def merge_category_map(df):
     return df
 
 # -----------------------------------------------------------------------------
-# 3. 经营看板 (📊)
+# 3. 经营分析看板 (📊)
 # -----------------------------------------------------------------------------
 app_mode = st.sidebar.radio("🧭 系统导航", ["📊 经营分析看板", "⚙️ 成本与配方中心"])
 
@@ -170,12 +165,12 @@ if app_mode == "📊 经营分析看板":
         if st.button("🗑️ 清空流水数据"):
             c = get_db_conn(); c.execute("DELETE FROM sales_raw"); c.commit(); c.close(); st.rerun()
 
-    if total_rows == 0: st.info("请先导入数据。"); st.stop()
+    if total_rows == 0: st.info("请先导入销售流水数据。"); st.stop()
     
     st.sidebar.markdown("---")
     parsed_dates = [datetime.strptime(p, '%Y-%m-%d').date() for p in available_periods if p]
     enable_comp = st.sidebar.checkbox("🌓 开启环比对比", value=False)
-    sel_range = st.sidebar.date_input("本期日期", [min(parsed_dates), max(parsed_dates)], min_value=min(parsed_dates), max_value=max(parsed_dates))
+    sel_range = st.sidebar.date_input("本期范围", [min(parsed_dates), max(parsed_dates)], min_value=min(parsed_dates), max_value=max(parsed_dates))
     
     df_cur = pd.DataFrame(); df_prev = pd.DataFrame()
     if len(sel_range) == 2:
@@ -234,34 +229,34 @@ if app_mode == "📊 经营分析看板":
         cat_df = cat_df.sort_values('销售数量', ascending=False)
 
         with st.container(border=True):
-            st.plotly_chart(px.bar(cat_df, x='二级分类', y='销售数量', title="销量对比", text='销售数量', color_discrete_sequence=['#3B82F6']).update_layout(height=350, plot_bgcolor="rgba(0,0,0,0)"), use_container_width=True)
+            st.plotly_chart(px.bar(cat_df, x='二级分类', y='销售数量', title="销量排行榜", text='销售数量', color_discrete_sequence=['#3B82F6']).update_layout(height=350, plot_bgcolor="rgba(0,0,0,0)"), use_container_width=True)
         with st.container(border=True):
-            st.plotly_chart(px.bar(cat_df, x='二级分类', y='销售金额', title="营收对比", text=cat_df['销售金额'].apply(lambda x:f"¥{x:,.0f}"), color_discrete_sequence=['#10B981']).update_layout(height=350, plot_bgcolor="rgba(0,0,0,0)"), use_container_width=True)
+            st.plotly_chart(px.bar(cat_df, x='二级分类', y='销售金额', title="营收排行榜", text=cat_df['销售金额'].apply(lambda x:f"¥{x:,.0f}"), color_discrete_sequence=['#10B981']).update_layout(height=350, plot_bgcolor="rgba(0,0,0,0)"), use_container_width=True)
         with st.container(border=True):
-            st.plotly_chart(px.bar(cat_df, x='二级分类', y='占比', title="贡献占比", text=cat_df['占比'].apply(lambda x:f"{x}%"), color_discrete_sequence=['#F59E0B']).update_layout(height=350, plot_bgcolor="rgba(0,0,0,0)"), use_container_width=True)
+            st.plotly_chart(px.bar(cat_df, x='二级分类', y='占比', title="营收贡献占比 (%)", text=cat_df['占比'].apply(lambda x:f"{x}%"), color_discrete_sequence=['#F59E0B']).update_layout(height=350, plot_bgcolor="rgba(0,0,0,0)"), use_container_width=True)
 
         st.markdown("### 📄 单品销售明细")
         v_df = df_cur.groupby(['商品名称'], as_index=False).agg({'一级分类':'first', '二级分类':'first', '销售数量':'sum', '销售金额':'sum'}).sort_values('销售数量', ascending=False)
         st.dataframe(v_df[['商品名称','一级分类','二级分类','销售数量','销售金额']], use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# 4. 成本配方中心 (⚙️)
+# 4. 成本配方中心 (⚙️ 核心修复版)
 # -----------------------------------------------------------------------------
 elif app_mode == "⚙️ 成本与配方中心":
     st.title("⚙️ 三级原物料与配方引擎")
-    t1, t2, t3 = st.tabs(["📦 基础原物料库", "📋 配置单品配方 (高效持久模式)", "📚 成本卡库管理"])
+    t1, t2, t3 = st.tabs(["📦 基础原物料库", "📋 配置单品配方 (极速模式)", "📚 成本卡库管理"])
     
     with t1:
-        f = st.file_uploader("导入三级价格表", type=["xlsx", "csv"])
+        f = st.file_uploader("导入三级价格档", type=["xlsx", "csv"])
         if f:
-            df_u = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
-            df_u.columns = [str(c).strip() for c in df_u.columns]
+            df_up = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
+            df_up.columns = [str(c).strip() for c in df_up.columns]
             ex = {'物流名称': '物料名称', '品项类别': '品项类别', '单价单位': '单位', '物流单价成本': '物流单价', '顿角单价成本': '顿角单价', '百度单价成本': '百度单价'}
-            df_u = df_u.rename(columns={c: ex[c] for c in df_u.columns if c in ex})
-            if '物料名称' in df_u.columns:
+            df_up = df_up.rename(columns={c: ex[c] for c in df_up.columns if c in ex})
+            if '物料名称' in df_up.columns:
                 for p in ['物流单价', '顿角单价', '百度单价']:
-                    if p in df_u.columns: df_u[p] = pd.to_numeric(df_u[p], errors='coerce').fillna(0)
-                c = get_db_conn(); df_u[['物料名称', '品项类别', '单位', '物流单价', '顿角单价', '百度单价']].to_sql('raw_materials', c, if_exists='replace', index=False); c.close(); st.success("物料库更新成功"); st.rerun()
+                    if p in df_up.columns: df_up[p] = pd.to_numeric(df_up[p], errors='coerce').fillna(0)
+                c = get_db_conn(); df_up[['物料名称', '品项类别', '单位', '物流单价', '顿角单价', '百度单价']].to_sql('raw_materials', c, if_exists='replace', index=False); c.close(); st.success("原物料库已刷新"); st.rerun()
         c = get_db_conn(); st.dataframe(pd.read_sql("SELECT * FROM raw_materials", c), use_container_width=True, hide_index=True); c.close()
 
     with t2:
@@ -274,93 +269,93 @@ elif app_mode == "⚙️ 成本与配方中心":
             rmats = pd.read_sql("SELECT 物料名称 FROM raw_materials", conn)['物料名称'].tolist()
         except: df_opt = pd.DataFrame(); stores = []; rmats = []
         
-        if df_opt.empty: st.warning("请在看板导入报表。")
+        if df_opt.empty: st.warning("请先在看板导入报表。")
         else:
-            c_track, c_scope = st.columns(2)
-            db_type = '物流' if '物流' in c_track.radio("1. 核算轨道", ["📦 物流配方", "🏪 门店配方"]) else '门店'
-            scope = c_scope.selectbox("2. 适用范围", ["【全局默认配方】", "百度项目", "顿角项目"] + stores)
+            c_tr, c_sc = st.columns(2)
+            db_type = '物流' if '物流' in c_tr.radio("1. 核算轨道", ["📦 物流配方", "🏪 门店配方"]) else '门店'
+            scope = c_sc.selectbox("2. 适用范围", ["【全局默认配方】", "百度项目", "顿角项目"] + stores)
             
             st.divider()
             c_p, c_s, c_m = st.columns(3)
-            p = c_p.selectbox("3. 选择商品", sorted(df_opt['商品名称'].unique().tolist()))
+            p = c_p.selectbox("3. 选择饮品", sorted(df_opt['商品名称'].unique().tolist()))
             s = c_s.selectbox("4. 规格", sorted(df_opt[df_opt['商品名称']==p]['规格'].unique().tolist()))
             m = c_m.selectbox("5. 做法", sorted(df_opt[(df_opt['商品名称']==p)&(df_opt['规格']==s)]['做法'].unique().tolist()))
             
             # --- 🌟 稳定缓冲区逻辑 🌟 ---
-            if 'active_prod' not in st.session_state: st.session_state.active_prod = p
-            if 'draft_bom' not in st.session_state: st.session_state.draft_bom = pd.DataFrame(columns=['物料名称', '用量'])
+            if 'active_prod_name' not in st.session_state: st.session_state.active_prod_name = p
+            if 'current_recipe_buffer' not in st.session_state: 
+                st.session_state.current_recipe_buffer = pd.DataFrame(columns=['物料名称', '用量'])
 
-            # 切换商品重置提示
-            if st.session_state.active_prod != p:
-                if not st.session_state.draft_bom.empty:
-                    if st.button("🗑️ 切换了商品，清空清单"):
-                        st.session_state.draft_bom = pd.DataFrame(columns=['物料名称', '用量'])
-                        st.session_state.active_prod = p
+            # 切换商品逻辑
+            if st.session_state.active_prod_name != p:
+                if not st.session_state.current_recipe_buffer.empty:
+                    st.warning(f"切换了商品：{p}。是否清空之前的清单？")
+                    col_w1, col_w2 = st.columns(2)
+                    if col_w1.button("🗑️ 清空并重新录入"):
+                        st.session_state.current_recipe_buffer = pd.DataFrame(columns=['物料名称', '用量'])
+                        st.session_state.active_prod_name = p
                         st.rerun()
-                else: st.session_state.active_prod = p
+                    if col_w2.button("🤝 保留清单（用于快速复制）"):
+                        st.session_state.active_prod_name = p
+                        st.rerun()
+                else: st.session_state.active_prod_name = p
 
             st.markdown("#### 📝 配方清单编辑器")
-            st.info("💡 **高效录入指引**：\n1. 点击表格左侧 **`+`** 增加行。\n2. 点击单元格输入并**搜索**物料。\n3. 修改用量。**切换【规格/做法】时，内容会保留，方便极速配置下一个规格。**")
+            if st.button("📥 载入数据库现有配方（覆盖当前）"):
+                db_d = pd.read_sql("SELECT 物料名称, 用量 FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=?", conn, params=(db_type, scope, p, s, m))
+                if not db_d.empty: st.session_state.current_recipe_buffer = db_d; st.rerun()
+                else: st.toast("无数据")
 
-            if st.button("📥 载入此组合已存配方"):
-                existing = pd.read_sql("SELECT 物料名称, 用量 FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=?", conn, params=(db_type, scope, p, s, m))
-                if not existing.empty: st.session_state.draft_bom = existing; st.rerun()
-                else: st.toast("库内暂无配方。")
-
-            # 🚀 稳定版 Data Editor
-            edited_df = st.data_editor(
-                st.session_state.draft_bom,
+            # 🚀 稳定 Data Editor (完全隐藏序号)
+            final_edited = st.data_editor(
+                st.session_state.current_recipe_buffer,
                 column_config={
-                    "物料名称": st.column_config.SelectboxColumn("物料名称 (可输入搜索)", options=rmats, required=True, width="large"),
-                    "用量": st.column_config.NumberColumn("用量 (g/ml)", min_value=0.0, format="%.2f", required=True)
+                    "物料名称": st.column_config.SelectboxColumn("物料名称 (可搜)", options=rmats, required=True, width="large"),
+                    "用量": st.column_config.NumberColumn("用量", min_value=0.0, format="%.2f", required=True)
                 },
-                num_rows="dynamic",
-                use_container_width=True,
-                hide_index=True, # ✅ 彻底隐藏序号列
-                key="recipe_editor_v2"
+                num_rows="dynamic", use_container_width=True, hide_index=True, key="stable_editor_v3"
             )
-            
-            # 实时写回缓冲区
-            st.session_state.draft_bom = edited_df
+            st.session_state.current_recipe_buffer = final_edited # 保持同步
 
             col_sv, col_cl, _ = st.columns([2, 2, 4])
-            if col_sv.button("💾 确认并保存当前整张配方卡", type="primary", use_container_width=True):
-                # 数据清洗：哪怕没索引也能存
-                final_data = edited_df.dropna(subset=['物料名称'])
-                final_data = final_data[final_data['用量'] > 0]
+            if col_sv.button("💾 确认并保存当前配方卡", type="primary", use_container_width=True):
+                # ✅ 核心修复：预先对用户填写的表格进行聚合（防止用户手动填入重复物料导致报错）
+                save_df = final_edited.dropna(subset=['物料名称'])
+                save_df = save_df[save_df['用量'] > 0]
                 
-                if not final_data.empty:
+                if not save_df.empty:
+                    # 按照物料名称求和，防止重复 Key 导致 IntegrityError
+                    save_df = save_df.groupby('物料名称', as_index=False)['用量'].sum()
+                    
                     cursor = conn.cursor()
                     cursor.execute("DELETE FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=?", (db_type, scope, p, s, m))
-                    for _, row in final_data.iterrows():
+                    for _, row in save_df.iterrows():
                         cursor.execute("INSERT INTO bom_recipes VALUES (?,?,?,?,?,?,?)", (db_type, scope, p, s, m, row['物料名称'], row['用量']))
                     conn.commit()
-                    st.success(f"✅ 【{p} - {s}/{m}】已保存！可直接切规格配下一张。")
-                else: st.error("清单为空。")
+                    st.success(f"✅ 保存成功！可直接切规格继续配置。")
+                else: st.error("内容为空")
 
-            if col_cl.button("🗑️ 清空当前表格内容", use_container_width=True):
-                st.session_state.draft_bom = pd.DataFrame(columns=['物料名称', '用量'])
+            if col_cl.button("🗑️ 彻底清空预览表"):
+                st.session_state.current_recipe_buffer = pd.DataFrame(columns=['物料名称', '用量'])
                 st.rerun()
-
         conn.close()
 
     with t3:
-        st.markdown("#### 📚 成本卡库预览与删除")
+        st.markdown("#### 📚 成本卡库管理与删除")
         conn = get_db_conn()
         db_b = pd.read_sql("SELECT * FROM bom_recipes", conn)
         db_r = pd.read_sql("SELECT * FROM raw_materials", conn)
         if not db_b.empty:
-            # 修复变量名 db_r
+            # 修正变量名合并
             lib = db_b.merge(db_r, on='物料名称', how='left').fillna(0)
             lib['lv'] = lib['用量'] * lib['物流单价']; lib['dv'] = lib['用量'] * lib['顿角单价']; lib['bv'] = lib['用量'] * lib['百度单价']
             grps = lib.groupby(['配方类型', '适用范围', '商品名称', '规格', '做法'])
             for (rt, sc, pdn, spc, mth), items in grps:
                 with st.container(border=True):
-                    st.markdown(f'<div class="recipe-card-header"><b>【{rt}】{pdn}</b> <span style="color:#64748B;">({spc}/{mth})</span><br><small>范围: {sc}</small></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="recipe-card-header"><b>【{rt}】{pdn}</b> ({spc}/{mth})<br><small>适用: {sc}</small></div>', unsafe_allow_html=True)
                     st.markdown(f'<span class="cost-tag">📦出厂:¥{items["lv"].sum():.2f}</span><span class="cost-tag">🏬顿角:¥{items["dv"].sum():.2f}</span><span class="cost-tag">🏢百度:¥{items["bv"].sum():.2f}</span>', unsafe_allow_html=True)
-                    if st.button("🗑️ 删除整卡", key=f"del_{rt}_{sc}_{pdn}_{spc}_{mth}", type="primary"):
+                    if st.button("🗑️ 彻底删除", key=f"d_all_{rt}_{sc}_{pdn}_{spc}_{mth}", type="primary"):
                         conn.execute("DELETE FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=? ", (rt, sc, pdn, spc, mth))
                         conn.commit(); st.rerun()
-                    st.write("🌿 包含物料: " + " 、 ".join([f"{r['物料名称']}({r['用量']}g)" for _,r in items.iterrows()]))
-        else: st.info("库内为空。")
+                    st.write("🌿 包含: " + " 、 ".join([f"{r['物料名称']}({r['用量']}g)" for _,r in items.iterrows()]))
         conn.close()
