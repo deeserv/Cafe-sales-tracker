@@ -214,6 +214,14 @@ def ingest_sales_data(uploaded_files):
         if df is None: continue
         
         df.columns = [str(c).strip() for c in df.columns]
+        
+        # 👇 新增：极其霸道的模糊匹配，专门抓取企迈的各种奇葩表头
+        for c in df.columns:
+            if '规格' in c: 
+                df.rename(columns={c: '规格'}, inplace=True)
+            elif any(kw in c in ['做法', '口味', '属性', '加料']): 
+                df.rename(columns={c: '做法'}, inplace=True)
+                
         if '商品类别' in df.columns and '商品分类' in df.columns: df = df.drop(columns=['商品类别'])
         df = df.rename(columns=RAW_COLUMN_MAPPING)
         
