@@ -55,6 +55,7 @@ st.markdown("""
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         font-weight: 800 !important;
     }
+    .stButton > button { border-radius: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -63,18 +64,6 @@ try:
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
-
-def update_chart_layout(fig, title_text=""):
-    fig.update_layout(
-        plot_bgcolor="rgba(255,255,255,0)", paper_bgcolor="rgba(255,255,255,0)",
-        margin=dict(l=10, r=20, t=45 if title_text else 20, b=10),
-        hoverlabel=dict(bgcolor="rgba(255,255,255,0.98)", font_size=13),
-        title=dict(text=title_text, font=dict(size=15, color="#1E293B", weight="bold"), x=0.01, y=0.98) if title_text else None,
-        bargap=0.25, showlegend=False
-    )
-    fig.update_xaxes(showgrid=True, gridcolor='rgba(226, 232, 240, 0.6)', zeroline=False, showline=False, title_text="")
-    fig.update_yaxes(showgrid=False, zeroline=False, showline=False, title_text="")
-    return fig
 
 # -----------------------------------------------------------------------------
 # 2. 内置字典与映射
@@ -106,7 +95,7 @@ PROJECT_STORE_MAPPING = {
     "光大项目": ["光大咖啡上地店", "光大咖啡上海分行店", "光大咖啡总行店"],
     "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
     "腾讯项目": ["北京总部image"],
-    "顿角项目": ["中信建投店", "北京移动美惠大厦店", "嘉铭中心店", "天津联想创新科技园店", "小米上海店", "快手万家灯火店", "悦读+车公庄店", "悦读+阜成路店", "新华三集团店", "科大讯飞店", "网易店", "联想总部店", "顿角咖啡研发中心店[高科岭]"]
+    "顿角项目": ["中信建投店", "北京移动美惠大厦店", "嘉铭中心店", "天津联想创新科技园店", "小米上海店", "快手万家灯火火店", "悦读+车公庄店", "悦读+阜成路店", "新华三集团店", "科大讯飞店", "网易店", "联想总部店", "顿角咖啡研发中心店[高科岭]"]
 }
 
 # -----------------------------------------------------------------------------
@@ -143,8 +132,6 @@ def init_db():
             百度单价 REAL
         )
     ''')
-    try: cursor.execute("ALTER TABLE raw_materials ADD COLUMN 品项类别 TEXT")
-    except: pass
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS bom_recipes (
@@ -378,7 +365,7 @@ if app_mode == "📊 经营分析看板":
     is_comparison_mode = False; days_current = 1; days_previous = 1
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📅 自由日历")
+    st.sidebar.subheader("📅 自由日历分析")
 
     conn = get_db_conn()
     if available_periods:
@@ -482,7 +469,7 @@ if app_mode == "📊 经营分析看板":
 
 
 # =============================================================================
-# 页面 2：⚙️ 成本配方中心
+# 页面 2：⚙️ 成本配方中心 (BOM 管理)
 # =============================================================================
 elif app_mode == "⚙️ 成本与配方中心":
     st.title("⚙️ 三级原物料与配方引擎")
@@ -558,14 +545,23 @@ elif app_mode == "⚙️ 成本与配方中心":
                     if st.button("确认添加", type="primary", use_container_width=True):
                         if search_mat != "-- 请选择 --" and new_qty > 0:
                             cursor = conn.cursor()
+                            # ✅ 修复重复设置问题：使用 INSERT OR REPLACE 确保同一物料只存一条记录
                             cursor.execute("INSERT OR REPLACE INTO bom_recipes VALUES (?,?,?,?,?,?,?)", 
                                            (db_type, apply_scope, selected_prod, selected_spec, selected_meth, search_mat, new_qty))
-                            conn.commit(); st.toast("✅ 已添加"); st.rerun()
+                            conn.commit(); st.toast("✅ 已更新/保存"); st.rerun()
 
             st.markdown("#### 📋 当前配方明细")
             curr_bom = pd.read_sql("SELECT 物料名称, 用量 FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=?", 
                                    conn, params=(db_type, apply_scope, selected_prod, selected_spec, selected_meth))
+            
             if not curr_bom.empty:
+                # ✅ 增加“重置/清空”当前组合的按钮
+                if st.button("🗑️ 清空此商品当前配方", type="primary"):
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=?", 
+                                   (db_type, apply_scope, selected_prod, selected_spec, selected_meth))
+                    conn.commit(); st.success("已清空"); st.rerun()
+
                 for idx, row in curr_bom.iterrows():
                     m, q = row['物料名称'], row['用量']
                     c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
@@ -576,18 +572,18 @@ elif app_mode == "⚙️ 成本与配方中心":
                         cursor.execute("UPDATE bom_recipes SET 用量=? WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=? AND 物料名称=?", 
                                        (new_q, db_type, apply_scope, selected_prod, selected_spec, selected_meth, m))
                         conn.commit(); st.rerun()
-                    if c4.button("移除", key=f"d_tab2_{idx}_{m}", type="primary"):
+                    if c4.button("移除", key=f"d_tab2_{idx}_{m}"):
                         cursor = conn.cursor()
                         cursor.execute("DELETE FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=? AND 物料名称=?", 
                                        (db_type, apply_scope, selected_prod, selected_spec, selected_meth, m))
                         conn.commit(); st.rerun()
+            else: st.info("当前组合暂无配方。")
         conn.close()
 
-    # --- Tab 3: 成本卡总览库 (🌟 新增编辑锁功能) ---
+    # --- Tab 3: 成本卡总览库 (🌟 支持整卡删除与高效修改) ---
     with tab_v:
         st.markdown("#### 📚 成本卡全局总览库")
         
-        # 使用 Session State 控制编辑锁
         if 'edit_mode' not in st.session_state:
             st.session_state.edit_mode = False
             
@@ -599,24 +595,20 @@ elif app_mode == "⚙️ 成本与配方中心":
             if not df_b.empty:
                 lib_view = df_b.merge(df_r, on='物料名称', how='left').fillna(0)
                 
-                # 控制按钮区
-                c_btn, _ = st.columns([1, 4])
+                # 顶部控制区
+                c_btn, c_tip = st.columns([1, 4])
                 if not st.session_state.edit_mode:
                     if c_btn.button("📝 开启全局编辑模式", type="primary", use_container_width=True):
                         st.session_state.edit_mode = True
                         st.rerun()
-                    
-                    # 🔐 只读状态展示
-                    st.dataframe(lib_view[['配方类型', '适用范围', '商品名称', '规格', '做法', '物料名称', '用量']], use_container_width=True, hide_index=True)
-                
                 else:
                     if c_btn.button("🔒 锁定并退出编辑", use_container_width=True):
                         st.session_state.edit_mode = False
                         st.rerun()
-                    
-                    st.info("💡 **编辑模式已开启**：您可以在下方表格直接修改【用量】或【删除行】。修改后请务必点击最下方的【💾 保存修改】。")
-                    
-                    # 🔓 编辑状态展示
+                    st.info("💡 **编辑模式已开启**：您可以在下方表格直接修改【用量】或【删除单行物料】。若要【彻底删除整杯产品】，请使用底部的红色按钮。")
+
+                if st.session_state.edit_mode:
+                    # 🔓 编辑状态显示 (支持多行修改用量)
                     edited_result = st.data_editor(
                         lib_view[['配方类型', '适用范围', '商品名称', '规格', '做法', '物料名称', '用量']],
                         column_config={
@@ -624,14 +616,15 @@ elif app_mode == "⚙️ 成本与配方中心":
                             "配方类型": st.column_config.TextColumn("类型", disabled=True),
                             "适用范围": st.column_config.TextColumn("范围", disabled=True),
                             "商品名称": st.column_config.TextColumn("商品", disabled=True),
+                            "规格": st.column_config.TextColumn("规格", disabled=True),
+                            "做法": st.column_config.TextColumn("做法", disabled=True),
                             "物料名称": st.column_config.TextColumn("物料", disabled=True),
                         },
                         use_container_width=True,
                         num_rows="dynamic",
                         key="global_editor"
                     )
-                    
-                    if st.button("💾 保存库内全部修改", type="primary"):
+                    if st.button("💾 保存库内用量修改", type="primary"):
                         final_df = edited_result.dropna(subset=['商品名称', '物料名称'])
                         final_df = final_df[final_df['用量'] > 0]
                         cursor = conn.cursor()
@@ -640,20 +633,45 @@ elif app_mode == "⚙️ 成本与配方中心":
                             cursor.execute("INSERT INTO bom_recipes VALUES (?,?,?,?,?,?,?)",
                                            (r['配方类型'], r['适用范围'], r['商品名称'], r['规格'], r['做法'], r['物料名称'], r['用量']))
                         conn.commit()
-                        st.success("✅ 全局数据已保存！")
+                        st.success("✅ 保存成功！")
                         st.session_state.edit_mode = False
                         st.rerun()
+                else:
+                    # 🔐 只读状态
+                    st.dataframe(lib_view[['配方类型', '适用范围', '商品名称', '规格', '做法', '物料名称', '用量']], use_container_width=True, hide_index=True)
 
-                # 底部始终显示的核算预览
+                # --- 核心新增：整卡汇总与删除逻辑 ---
                 st.divider()
-                st.markdown("#### 🔍 最终成本核算预览")
+                st.markdown("#### 🔍 最终成本核算与整卡管理")
                 lib_view['物流总'] = lib_view['用量'] * lib_view['物流单价']
                 lib_view['顿角总'] = lib_view['用量'] * lib_view['顿角单价']
                 lib_view['百度总'] = lib_view['用量'] * lib_view['百度单价']
+                
                 sum_df = lib_view.groupby(['配方类型', '适用范围', '商品名称', '规格', '做法']).agg({
                     '物流总': 'sum', '顿角总': 'sum', '百度总': 'sum', '物料名称': lambda x: '、'.join(x)
                 }).reset_index()
-                st.dataframe(sum_df.rename(columns={'物流总':'物流总成本','顿角总':'顿角总成本','百度总':'百度总成本','物料名称':'包含成分'}), use_container_width=True, hide_index=True)
+                
+                # 重新命表头
+                sum_df.columns = ['类型', '范围', '商品', '规格', '做法', '物流成本', '顿角成本', '百度成本', '包含物料']
+                
+                if st.session_state.edit_mode:
+                    st.warning("⚠️ 以下为【整卡彻底删除】区域。点击后将移除该组合下的全部物料！")
+                    for i, row in sum_df.iterrows():
+                        c_info, c_del = st.columns([8, 2])
+                        c_info.markdown(f"**[{row['类型']}]** {row['范围']} | {row['商品']} ({row['规格']}/{row['做法']})")
+                        if c_del.button(f"🗑️ 删除此配方卡", key=f"del_card_{i}", type="primary"):
+                            cursor = conn.cursor()
+                            cursor.execute("""
+                                DELETE FROM bom_recipes 
+                                WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=?
+                            """, (row['类型'], row['范围'], row['商品'], row['规格'], row['做法']))
+                            conn.commit()
+                            st.toast(f"✅ 已彻底删除 {row['商品']} 配方卡")
+                            st.rerun()
+                        st.divider()
+                else:
+                    st.dataframe(sum_df, use_container_width=True, hide_index=True)
+
             else: st.info("库内尚无配方数据。")
         except Exception as e: st.error(f"加载失败: {e}")
         finally: conn.close()
