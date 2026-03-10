@@ -571,22 +571,38 @@ elif app_mode == "⚙️ 成本与配方中心":
             if df_raw_up is not None:
                 df_raw_up.columns = [str(c).strip() for c in df_raw_up.columns]
                 col_map = {}
-                found = {'物料名称': False, '品项类别': False, '单位': False, '物流单价': False, '顿角单价': False, '百度单价': False}
                 
-                # 🎯 严格匹配您提供的 6 个专属字段表头
+                # 🎯 步骤1：最高优先级 -> 严格精确匹配您指定的6个标准表头
+                exact_targets = {
+                    '物流名称': '物料名称',
+                    '品项类别': '品项类别',
+                    '单价单位': '单位',
+                    '物流单价成本': '物流单价',
+                    '顿角单价成本': '顿角单价',
+                    '百度单价成本': '百度单价'
+                }
+                
                 for c in df_raw_up.columns:
-                    if not found['物料名称'] and any(kw in c for kw in ['物流名称', '物料', '原料', '产品']):
-                        col_map[c] = '物料名称'; found['物料名称'] = True
-                    elif not found['品项类别'] and any(kw in c for kw in ['品项类别', '类别', '分类']):
-                        col_map[c] = '品项类别'; found['品项类别'] = True
-                    elif not found['单位'] and any(kw in c for kw in ['单价单位', '单位']):
-                        col_map[c] = '单位'; found['单位'] = True
-                    elif not found['物流单价'] and any(kw in c for kw in ['物流单价成本', '物流单价', '物流']):
-                        col_map[c] = '物流单价'; found['物流单价'] = True
-                    elif not found['顿角单价'] and any(kw in c for kw in ['顿角单价成本', '顿角单价', '顿角']):
-                        col_map[c] = '顿角单价'; found['顿角单价'] = True
-                    elif not found['百度单价'] and any(kw in c for kw in ['百度单价成本', '百度单价', '百度']):
-                        col_map[c] = '百度单价'; found['百度单价'] = True
+                    if c in exact_targets:
+                        col_map[c] = exact_targets[c]
+
+                # 🎯 步骤2：对没有精确匹配上的，进行智能模糊兜底 (完美避开大规格名称的干扰)
+                mapped_vals = list(col_map.values())
+                for c in df_raw_up.columns:
+                    if c in col_map: 
+                        continue
+                    if '物料名称' not in mapped_vals and any(kw in c for kw in ['物料', '原料', '产品']):
+                        col_map[c] = '物料名称'; mapped_vals.append('物料名称')
+                    elif '品项类别' not in mapped_vals and any(kw in c for kw in ['类别', '分类']):
+                        col_map[c] = '品项类别'; mapped_vals.append('品项类别')
+                    elif '单位' not in mapped_vals and '单位' in c and '采购' not in c:
+                        col_map[c] = '单位'; mapped_vals.append('单位')
+                    elif '物流单价' not in mapped_vals and '物流' in c and '单价' in c:
+                        col_map[c] = '物流单价'; mapped_vals.append('物流单价')
+                    elif '顿角单价' not in mapped_vals and '顿角' in c and '单价' in c:
+                        col_map[c] = '顿角单价'; mapped_vals.append('顿角单价')
+                    elif '百度单价' not in mapped_vals and '百度' in c and '单价' in c:
+                        col_map[c] = '百度单价'; mapped_vals.append('百度单价')
                 
                 df_raw_up = df_raw_up.rename(columns=col_map)
                 
