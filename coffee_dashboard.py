@@ -207,7 +207,6 @@ def ingest_sales_data(uploaded_files):
         
         df.columns = [str(c).strip() for c in df.columns]
         
-        # ✅ 霸道匹配修正版：修复语法错误导致的失效
         for c in df.columns:
             if '规格' in c: 
                 df.rename(columns={c: '规格'}, inplace=True)
@@ -235,7 +234,6 @@ def ingest_sales_data(uploaded_files):
         if '统计周期' not in df.columns: df['统计周期'] = os.path.splitext(file_name)[0]
         df['统计周期'] = df['统计周期'].apply(lambda x: standardize_date(x, file_name))
         
-        # 规格做法填充
         if '规格' in df.columns:
             df['规格'] = df['规格'].replace(['nan', 'None', '', '--', 'NaN'], '常规').fillna('常规')
         else:
@@ -371,7 +369,6 @@ if app_mode == "📊 经营分析看板":
         if new_sales: ingest_sales_data(new_sales); st.rerun()
             
         st.divider()
-        # ✅ 新增诊断功能：让用户看到数据库里到底存了什么
         st.markdown("**🔍 库内规格抽检 (最新10条)**")
         if total_rows > 0:
             conn = get_db_conn()
@@ -505,7 +502,7 @@ if app_mode == "📊 经营分析看板":
 # =============================================================================
 elif app_mode == "⚙️ 成本与配方中心":
     st.title("⚙️ 三级原物料与配方引擎")
-    tab_m, tab_b, tab_v = st.tabs(["📦 第一步：基础原物料库", "📋 第二步：配置单品成本卡", "📚 第三步：成本卡总览库"])
+    tab_m, tab_b, tab_v = st.tabs(["📦 第一步：基础原物料库", "📋 第二步：配置单品成本卡", "📚 第三步：成本卡全局编辑库"])
     
     with tab_m:
         st.markdown("#### 1. 上传原物料价格档")
@@ -525,6 +522,14 @@ elif app_mode == "⚙️ 成本与配方中心":
                     conn = get_db_conn()
                     df_raw_up[['物料名称', '品项类别', '单位', '物流单价', '顿角单价', '百度单价']].to_sql('raw_materials', conn, if_exists='replace', index=False)
                     conn.close(); st.success("✅ 更新成功！"); st.rerun()
+                    
+        st.markdown("#### 2. 预览当前价格库")
+        conn = get_db_conn()
+        try:
+            df_raw_view = pd.read_sql("SELECT * FROM raw_materials", conn)
+            st.dataframe(df_raw_view, use_container_width=True)
+        except: st.write("暂无原物料数据")
+        conn.close()
 
     with tab_b:
         st.markdown("#### 1. 选择配置环境")
@@ -558,7 +563,6 @@ elif app_mode == "⚙️ 成本与配方中心":
             all_prods = sorted(df_opts['商品名称'].unique().tolist())
             selected_prod = c_prod.selectbox("选择商品", all_prods)
             
-            # ✅ 级联筛选：只显示该商品实际存在的规格和做法
             spec_opts = sorted(df_opts[df_opts['商品名称'] == selected_prod]['规格'].unique().tolist())
             selected_spec = c_spec.selectbox("选择规格", spec_opts)
             
@@ -566,7 +570,7 @@ elif app_mode == "⚙️ 成本与配方中心":
             selected_meth = c_meth.selectbox("选择做法", meth_opts)
             
             with st.container(border=True):
-                st.markdown(f"#### ➕ 添加物料到: `{selected_prod}` | `{selected_spec}` | `{selected_meth}`")
+                st.markdown(f"#### ➕ 添加新物料到: `{selected_prod}`")
                 col_s1, col_s2, col_s3 = st.columns([3, 1, 1])
                 with col_s1: search_mat = st.selectbox("搜索物料", ["-- 请选择 --"] + raw_mat_list)
                 with col_s2: new_qty = st.number_input("用量", min_value=0.0, step=1.0)
@@ -579,7 +583,7 @@ elif app_mode == "⚙️ 成本与配方中心":
                                            (db_type, apply_scope, selected_prod, selected_spec, selected_meth, search_mat, new_qty))
                             conn.commit(); st.toast("✅ 已添加"); st.rerun()
 
-            st.markdown("#### 📋 当前配方明细")
+            st.markdown("#### 📋 当前配方明细 (独立修改)")
             curr_bom = pd.read_sql("SELECT 物料名称, 用量 FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=?", 
                                    conn, params=(db_type, apply_scope, selected_prod, selected_spec, selected_meth))
             
@@ -588,13 +592,13 @@ elif app_mode == "⚙️ 成本与配方中心":
                     m, q = row['物料名称'], row['用量']
                     c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
                     c1.markdown(f"☕ {m}")
-                    new_q = c2.number_input("数量", value=float(q), key=f"q_{idx}_{m}", label_visibility="collapsed")
-                    if c3.button("保存", key=f"s_{idx}_{m}"):
+                    new_q = c2.number_input("用量", value=float(q), key=f"q_tab2_{idx}_{m}", label_visibility="collapsed")
+                    if c3.button("保存", key=f"s_tab2_{idx}_{m}"):
                         cursor = conn.cursor()
                         cursor.execute("UPDATE bom_recipes SET 用量=? WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=? AND 物料名称=?", 
                                        (new_q, db_type, apply_scope, selected_prod, selected_spec, selected_meth, m))
                         conn.commit(); st.rerun()
-                    if c4.button("移除", key=f"d_{idx}_{m}", type="primary"):
+                    if c4.button("移除", key=f"d_tab2_{idx}_{m}", type="primary"):
                         cursor = conn.cursor()
                         cursor.execute("DELETE FROM bom_recipes WHERE 配方类型=? AND 适用范围=? AND 商品名称=? AND 规格=? AND 做法=? AND 物料名称=?", 
                                        (db_type, apply_scope, selected_prod, selected_spec, selected_meth, m))
@@ -602,21 +606,82 @@ elif app_mode == "⚙️ 成本与配方中心":
             else: st.info("当前组合暂无配方。")
         conn.close()
 
+    # --- Tab 3: 全局成本卡库 (核心升级：直接编辑) ---
     with tab_v:
-        st.markdown("#### 📚 成本卡库预览")
+        st.markdown("#### 📚 成本卡全局编辑大盘")
+        st.info("💡 **说明**：您可以在下方表格中直接修改任一配方的【用量】或【删除行】。修改完成后请务必点击下方的蓝色【保存全部修改】按钮。")
+        
         conn = get_db_conn()
         try:
             df_b = pd.read_sql("SELECT * FROM bom_recipes", conn)
             df_r = pd.read_sql("SELECT * FROM raw_materials", conn)
-            if not df_b.empty and not df_r.empty:
-                lib = df_b.merge(df_r, on='物料名称', how='left').fillna(0)
-                lib['物流总'] = lib['用量'] * lib['物流单价']
-                lib['顿角总'] = lib['用量'] * lib['顿角单价']
-                lib['百度总'] = lib['用量'] * lib['百度单价']
-                sum_df = lib.groupby(['配方类型', '适用范围', '商品名称', '规格', '做法']).agg({
-                    '物流总': 'sum', '顿角总': 'sum', '百度总': 'sum', '物料名称': lambda x: '、'.join(x)
+            
+            if not df_b.empty:
+                # 为了让用户看清楚成本，我们需要把单价接上来
+                lib_view = df_b.merge(df_r, on='物料名称', how='left').fillna(0)
+                
+                # 记录原始主键信息，用于后期精准保存
+                # 隐藏主键列不给用户看，但数据里得有
+                edit_df = lib_view[['配方类型', '适用范围', '商品名称', '规格', '做法', '物料名称', '用量', '物流单价', '顿角单价', '百度单价']]
+                
+                # 启用表格编辑
+                edited_result = st.data_editor(
+                    edit_df,
+                    column_config={
+                        "配方类型": st.column_config.TextColumn("类型", disabled=True),
+                        "适用范围": st.column_config.TextColumn("范围", disabled=True),
+                        "商品名称": st.column_config.TextColumn("商品", disabled=True),
+                        "规格": st.column_config.TextColumn("规格", disabled=True),
+                        "做法": st.column_config.TextColumn("做法", disabled=True),
+                        "物料名称": st.column_config.TextColumn("物料", disabled=True),
+                        "用量": st.column_config.NumberColumn("用量(g/ml)", format="%.2f", min_value=0.0),
+                        "物流单价": st.column_config.NumberColumn("物流单价", format="¥ %.4f", disabled=True),
+                        "顿角单价": st.column_config.NumberColumn("顿角单价", format="¥ %.4f", disabled=True),
+                        "百度单价": st.column_config.NumberColumn("百度单价", format="¥ %.4f", disabled=True),
+                    },
+                    use_container_width=True,
+                    num_rows="dynamic", # 支持删除行
+                    key="global_bom_editor"
+                )
+                
+                # 按钮操作
+                c_save, c_refresh, _ = st.columns([1,1,3])
+                if c_save.button("💾 保存库内全部修改", type="primary", use_container_width=True):
+                    # 清洗掉可能被删空的数据
+                    final_df = edited_result.dropna(subset=['商品名称', '物料名称'])
+                    final_df = final_df[final_df['用量'] > 0]
+                    
+                    cursor = conn.cursor()
+                    # 暴力更新法：清空再存入
+                    cursor.execute("DELETE FROM bom_recipes")
+                    for _, r in final_df.iterrows():
+                        cursor.execute("INSERT INTO bom_recipes (配方类型, 适用范围, 商品名称, 规格, 做法, 物料名称, 用量) VALUES (?,?,?,?,?,?,?)",
+                                       (r['配方类型'], r['适用范围'], r['商品名称'], r['规格'], r['做法'], r['物料名称'], r['用量']))
+                    conn.commit()
+                    st.success("✅ 全局成本库已成功更新！")
+                    st.rerun()
+                
+                if c_refresh.button("🔄 放弃修改并刷新", use_container_width=True):
+                    st.rerun()
+                
+                # 底部自动呈现汇总后的总成本卡，方便核对
+                st.divider()
+                st.markdown("#### 🔍 最终成本核算预览 (核对专用)")
+                lib_view['物流分项'] = lib_view['用量'] * lib_view['物流单价']
+                lib_view['顿角分项'] = lib_view['用量'] * lib_view['顿角单价']
+                lib_view['百度分项'] = lib_view['用量'] * lib_view['百度单价']
+                
+                sum_df = lib_view.groupby(['配方类型', '适用范围', '商品名称', '规格', '做法']).agg({
+                    '物流分项': 'sum', '顿角分项': 'sum', '百度分项': 'sum', '物料名称': lambda x: '、'.join(x)
                 }).reset_index()
-                st.dataframe(sum_df, use_container_width=True, hide_index=True)
-            else: st.info("配方库为空。")
-        except: pass
-        finally: conn.close()
+                
+                st.dataframe(sum_df.rename(columns={
+                    '物流分项':'物流总成本','顿角分项':'顿角总成本','百度分项':'百度总成本','物料名称':'包含成分'
+                }), use_container_width=True, hide_index=True)
+                
+            else:
+                st.info("配方库目前为空，请先前往【第二步】添加一些产品配方。")
+        except Exception as e:
+            st.error(f"加载预览失败: {e}")
+        finally:
+            conn.close()
