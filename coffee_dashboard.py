@@ -510,13 +510,28 @@ if app_mode == "📊 经营分析看板":
     st.markdown("---")
     st.markdown("### 📄 商品销售与配方成本明细")
     
+    # 🎯 智能加权聚合引擎：按实际销售的各规格/做法比例，精准计算总成本，前端折叠展示
+    df_current['物流总成本'] = df_current['销售数量'] * df_current['物流单位成本']
+    df_current['门店总成本'] = df_current['销售数量'] * df_current['门店单位成本']
+    
+    # 只要该行数据有销量，但成本是0，说明该规格缺失配方
+    df_current['是否缺配方'] = ((df_current['物流单位成本'] == 0) & (df_current['门店单位成本'] == 0)).astype(int)
+
     agg_dict = {
         '一级分类': 'first', '二级分类': 'first', '所属项目': 'first', 
         '销售数量': 'sum', '销售金额': 'sum', 
-        '物流单位成本': 'first', '门店单位成本': 'first', 
-        '物流毛利': 'sum', '门店毛利': 'sum'
+        '物流总成本': 'sum', '门店总成本': 'sum', 
+        '物流毛利': 'sum', '门店毛利': 'sum',
+        '是否缺配方': 'max' # 如果某款产品有任意一个售出的规格没配方，这里就会报警
     }
-    df_view = df_current.groupby(['商品名称', '规格', '做法'], as_index=False).agg(agg_dict)
+    
+    # 🌟 核心：前端去掉规格和做法，仅按“商品名称”进行完美聚合
+    df_view = df_current.groupby('商品名称', as_index=False).agg(agg_dict)
+    
+    # 重新计算该商品的“加权平均单杯成本” (总成本 / 总数量)
+    df_view['物流单位成本'] = np.where(df_view['销售数量'] > 0, df_view['物流总成本'] / df_view['销售数量'], 0)
+    df_view['门店单位成本'] = np.where(df_view['销售数量'] > 0, df_view['门店总成本'] / df_view['销售数量'], 0)
+
     df_view['物流毛利率'] = (df_view['物流毛利'] / df_view['销售金额'] * 100).fillna(0)
     df_view['门店毛利率'] = (df_view['门店毛利'] / df_view['销售金额'] * 100).fillna(0)
     df_view['销售占比'] = (df_view['销售金额'] / df_view['销售金额'].sum() * 100).fillna(0)
@@ -532,25 +547,26 @@ if app_mode == "📊 经营分析看板":
     df_view['BCG矩阵'] = df_view.apply(get_bcg, axis=1)
 
     conditions = [
-        (df_view['门店单位成本'] == 0) & (df_view['物流单位成本'] == 0),
+        (df_view['是否缺配方'] == 1),
         (df_view['门店毛利率'] < 60), 
         (df_view['门店毛利率'] >= 60) & (df_view['门店毛利率'] <= 65)
     ]
-    choices = ['⚠️ 未配配方', '🔴 低毛利', '🟡 预警']
+    choices = ['⚠️ 缺规格配方', '🔴 低毛利', '🟡 预警']
     df_view['健康度'] = np.select(conditions, choices, default='🟢 健康')
 
     max_sales_val = df_view['销售数量'].max()
     safe_max_sales = int(max_sales_val) if pd.notna(max_sales_val) and max_sales_val > 0 else 1
 
-    cols = ['序号', '商品名称', '规格', '做法', 'BCG矩阵', '健康度', '二级分类', '销售数量', '销售金额', '物流单位成本', '物流毛利率', '门店单位成本', '门店毛利率', '销售占比']
+    # 隐藏了规格和做法列，界面更纯净
+    cols = ['序号', '商品名称', 'BCG矩阵', '健康度', '二级分类', '销售数量', '销售金额', '物流单位成本', '物流毛利率', '门店单位成本', '门店毛利率', '销售占比']
     with st.container(border=True):
         st.dataframe(df_view[cols], column_config={
             "序号": st.column_config.NumberColumn("排名", width="small"),
             "销售数量": st.column_config.ProgressColumn("总销量", format="%d", min_value=0, max_value=safe_max_sales),
             "销售金额": st.column_config.NumberColumn("营收", format="¥%.2f"),
-            "物流单位成本": st.column_config.NumberColumn("物流配方成本", format="¥%.2f"),
+            "物流单位成本": st.column_config.NumberColumn("加权出厂成本", format="¥%.2f", help="根据售出的各规格数量自动计算的加权平均成本"),
             "物流毛利率": st.column_config.NumberColumn("物流毛利率", format="%.2f%%"),
-            "门店单位成本": st.column_config.NumberColumn("到店配方成本", format="¥%.2f"),
+            "门店单位成本": st.column_config.NumberColumn("加权到店成本", format="¥%.2f", help="根据售出的各规格数量自动计算的加权平均成本"),
             "门店毛利率": st.column_config.NumberColumn("门店毛利率", format="%.2f%%"),
             "销售占比": st.column_config.NumberColumn("营收占比", format="%.2f%%"),
         }, use_container_width=True, hide_index=True)
