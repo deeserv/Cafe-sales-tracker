@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta
 
 # -----------------------------------------------------------------------------
-# 1. 核心配置与 CSS 注入 (精装全功能优化版)
+# 1. 核心配置与 CSS 注入 (布局与显示优化)
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="顿角咖啡智能经营系统",
@@ -45,11 +45,11 @@ st.markdown("""
     
     /* 指标卡片美化 */
     div[data-testid="stMetric"] {
-        background-color: #FFFFFF; padding: 22px; border-radius: 18px;
-        box-shadow: 0 4px 10px -2px rgba(0, 0, 0, 0.05); border: 1px solid #E2E8F0;
+        background-color: #FFFFFF; padding: 18px; border-radius: 15px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border: 1px solid #E2E8F0;
     }
     [data-testid="stMetricValue"] {
-        font-size: 30px !important; font-weight: 800 !important;
+        font-size: 28px !important; font-weight: 800 !important;
         background: -webkit-linear-gradient(120deg, #1E40AF, #3B82F6);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
@@ -60,7 +60,8 @@ st.markdown("""
         margin-bottom: 25px;
     }
     
-    .recipe-card-header { background: #F8FAFC; padding: 15px; border-radius: 12px; border-left: 8px solid #3B82F6; margin-bottom: 12px; }
+    .recipe-card-header { background: #F1F5F9; padding: 12px 15px; border-radius: 10px; border-left: 6px solid #3B82F6; margin-bottom: 10px; }
+    .cost-tag { background: #DBEAFE; color: #1E40AF; padding: 3px 8px; border-radius: 5px; font-size: 13px; font-weight: 700; border: 1px solid #BFDBFE; margin-right: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,8 +117,14 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 3. 计算引擎
+# 3. 计算与清洗引擎
 # -----------------------------------------------------------------------------
+def standardize_date(val, f_name):
+    try: return pd.to_datetime(val).strftime('%Y-%m-%d')
+    except:
+        match = re.search(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{8}', f_name)
+        return pd.to_datetime(match.group()).strftime('%Y-%m-%d') if match else datetime.now().strftime('%Y-%m-%d')
+
 def clean_store_name(n): return str(n).strip().replace(" ", "").replace("(", "（").replace(")", "）")
 
 def merge_category_map(df):
@@ -134,7 +141,7 @@ def merge_category_map(df):
     return df
 
 # -----------------------------------------------------------------------------
-# 4. 看板主体 (📊 经营分析)
+# 4. 侧边栏与数据导入
 # -----------------------------------------------------------------------------
 app_mode = st.sidebar.radio("🧭 系统导航", ["📊 经营分析看板", "⚙️ 成本与配方中心"])
 
@@ -146,7 +153,7 @@ if app_mode == "📊 经营分析看板":
             available_periods = sorted(pd.read_sql("SELECT DISTINCT 统计周期 FROM sales_raw WHERE 统计周期 IS NOT NULL", conn)['统计周期'].tolist())
         except: total_rows = 0; available_periods = []
         finally: conn.close()
-        st.markdown(f"库内已存：**{total_rows:,}** 条")
+        st.markdown(f"库内记录：**{total_rows:,}** 条")
         files = st.file_uploader("📥 导入日结流水", type=["xlsx", "csv"], accept_multiple_files=True)
         if files:
             conn = get_db_conn()
@@ -167,16 +174,15 @@ if app_mode == "📊 经营分析看板":
                 df['source_file'] = f.name
                 df[['门店名称', '商品名称', '商品类别', '规格', '做法', '统计周期', '销售金额', '销售数量', 'source_file']].to_sql('sales_raw', conn, if_exists='append', index=False)
             conn.close(); st.rerun()
-        if st.button("🗑️ 清空销售数据", use_container_width=True):
+        if st.button("🗑️ 清空流水", use_container_width=True):
             c = get_db_conn(); c.execute("DELETE FROM sales_raw"); c.commit(); c.close(); st.rerun()
 
-    if total_rows == 0: st.info("请先导入企迈销售数据。"); st.stop()
+    if total_rows == 0: st.info("请先导入企迈销售单。"); st.stop()
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("📅 经营周期与对比")
     parsed_dates = [datetime.strptime(p, '%Y-%m-%d').date() for p in available_periods if p]
     
-    # 🌓 环比开关
     enable_comp = st.sidebar.checkbox("🌓 开启环比对比", value=False)
     sel_range = st.sidebar.date_input("本期范围", [min(parsed_dates), max(parsed_dates)], min_value=min(parsed_dates), max_value=max(parsed_dates))
     
@@ -185,9 +191,7 @@ if app_mode == "📊 经营分析看板":
         s1, e1 = sel_range
         conn = get_db_conn()
         df_cur = pd.read_sql("SELECT * FROM sales_raw WHERE 统计周期 >= ? AND 统计周期 <= ?", conn, params=(s1.strftime('%Y-%m-%d'), e1.strftime('%Y-%m-%d')))
-        
         if enable_comp:
-            # 自动建议对比范围
             dur = (e1 - s1).days + 1
             s2, e2 = s1 - timedelta(days=dur), s1 - timedelta(days=1)
             prev_range = st.sidebar.date_input("对比上期 (自动识别)", [s2, e2])
@@ -213,7 +217,7 @@ if app_mode == "📊 经营分析看板":
             df_cur = df_cur[df_cur['门店名称'].isin(sel_sts)]
             if not df_prev.empty: df_prev = df_prev[df_prev['门店名称'].isin(sel_sts)]
 
-        # ✅ 核心修复：安全计算天数，防止 KeyError
+        # 安全计算天数
         days_cur = max(1, df_cur['统计周期'].nunique()) if not df_cur.empty else 1
         days_prev = max(1, df_prev['统计周期'].nunique()) if not df_prev.empty else 1
 
@@ -230,7 +234,7 @@ if app_mode == "📊 经营分析看板":
         q1, a1, dr1, cp1 = get_vals(df_cur, days_cur)
         q2, a2, dr2, cp2 = get_vals(df_prev, days_prev) if not df_prev.empty else (None,None,None,None)
 
-        # 2x2 布局
+        # 指标卡片 (2x2 布局)
         row1_c1, row1_c2 = st.columns(2)
         row2_c1, row2_c2 = st.columns(2)
         
@@ -257,16 +261,15 @@ if app_mode == "📊 经营分析看板":
             st.plotly_chart(fig_l1, use_container_width=True)
 
         # ---------------------------------------------------------------------
-        # 🚀 找回并升级：二级分类“独立三剑客”看板
+        # 🚀 模块：二级分类“独立三剑客”看板
         # ---------------------------------------------------------------------
         st.markdown("---")
-        st.subheader("📈 二级分类精细化拆解 (分维度查看)")
+        st.subheader("📈 二级分类明细看板 (分维度查看)")
         
         cat_df = df_cur.groupby('二级分类').agg({'销售数量':'sum', '销售金额':'sum'}).reset_index()
         cat_df['营收占比'] = (cat_df['销售金额'] / cat_df['销售金额'].sum() * 100).round(1)
         cat_df = cat_df.sort_values('销售数量', ascending=False)
 
-        # 独立三个图表，不挤在一起
         with st.container(border=True):
             st.markdown("**1. 二级分类销量对比 (杯数)**")
             fig_q = px.bar(cat_df, x='二级分类', y='销售数量', text='销售数量', color_discrete_sequence=['#3B82F6'])
@@ -286,7 +289,7 @@ if app_mode == "📊 经营分析看板":
             st.plotly_chart(fig_p, use_container_width=True)
 
         # ---------------------------------------------------------------------
-        # 单品明细 (暂时隐藏毛利)
+        # 单品销售排行
         # ---------------------------------------------------------------------
         st.markdown("### 📄 单品销售实绩")
         v_df = df_cur.groupby(['商品名称'], as_index=False).agg({'一级分类':'first', '二级分类':'first', '销售数量':'sum', '销售金额':'sum'}).sort_values('销售数量', ascending=False)
@@ -298,13 +301,13 @@ if app_mode == "📊 经营分析看板":
         }, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# ⚙️ 成本配方中心 (保持最高效管理逻辑)
+# ⚙️ 成本配方中心
 # -----------------------------------------------------------------------------
 elif app_mode == "⚙️ 成本与配方中心":
     st.title("⚙️ 三级原物料与配方引擎")
-    t1, t2, t3 = st.tabs(["📦 基础原物料库", "📋 配置单品配方", "📚 成本卡库管理"])
+    tab1, tab2, tab3 = st.tabs(["📦 基础原物料库", "📋 配置单品配方", "📚 成本卡库管理"])
     
-    with t1:
+    with tab1:
         f = st.file_uploader("上传三级价格表", type=["xlsx", "csv"])
         if f:
             df_u = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
@@ -317,7 +320,7 @@ elif app_mode == "⚙️ 成本与配方中心":
                 c = get_db_conn(); df_u[['物料名称', '品项类别', '单位', '物流单价', '顿角单价', '百度单价']].to_sql('raw_materials', c, if_exists='replace', index=False); c.close(); st.success("物料库更新成功"); st.rerun()
         c = get_db_conn(); st.dataframe(pd.read_sql("SELECT * FROM raw_materials", c), use_container_width=True); c.close()
 
-    with t2:
+    with tab2:
         conn = get_db_conn()
         try:
             df_o = pd.read_sql("SELECT DISTINCT 商品名称, 规格, 做法, 门店名称, 商品类别 FROM sales_raw", conn)
@@ -333,7 +336,7 @@ elif app_mode == "⚙️ 成本与配方中心":
             db_t = '物流' if '物流' in ct.radio("轨道", ["🏪 门店配方", "📦 物流配方"]) else '门店'
             scp = "【全局默认配方】" if db_t == '物流' else cs.selectbox("范围", ["【全局默认配方】", "【顿角项目配方】", "【百度项目配方】"] + sorted(df_o['门店名称'].unique().tolist()))
             
-            p = st.selectbox("选择商品", sorted(df_o['商品名称'].unique().tolist()))
+            p = st.selectbox("商品", sorted(df_o['商品名称'].unique().tolist()))
             s = st.selectbox("规格", sorted(df_o[df_o['商品名称']==p]['规格'].unique().tolist()))
             m = st.selectbox("做法", sorted(df_o[(df_o['商品名称']==p)&(df_o['规格']==s)]['做法'].unique().tolist()))
             
