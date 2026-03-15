@@ -21,7 +21,7 @@ CATEGORY_RULES = {
 }
 
 # =============================================================================
-# 2. 核心算法：数据处理引擎 (多维度销量逻辑)
+# 2. 核心算法：数据处理引擎 (精准对账逻辑)
 # =============================================================================
 def logic_parse_days(date_series):
     if date_series.empty: return 1
@@ -49,10 +49,10 @@ def logic_clean_data(df):
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
     df['退款数量_raw'] = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
-    # 🌟 核心修改：遵循您的最新逻辑
-    # 1. 销售杯数 = 原始销量 + 退款数
-    df['销售杯数'] = df['销售数量_raw'] + df['退款数量_raw']
-    # 2. 净销售杯数 = 销售杯数 - 退款数
+    # 🌟 修正后的核心逻辑：
+    # 1. 销售杯数 = 报表原始销量 (例如 830)
+    df['销售杯数'] = df['销售数量_raw']
+    # 2. 净销售杯数 = 销售杯数 - 退款数 (例如 830 - 7 = 823)
     df['净销售杯数'] = df['销售杯数'] - df['退款数量_raw']
     
     # 金额保持原始实收
@@ -75,7 +75,7 @@ def logic_clean_data(df):
     return df.reset_index(drop=True)
 
 # =============================================================================
-# 3. UI 界面
+# 3. UI 界面美化
 # =============================================================================
 def init_ui():
     st.set_page_config(page_title="顿角咖啡经营智能看板", page_icon="☕", layout="wide")
@@ -111,10 +111,10 @@ def view_dashboard():
                 except: pass
             if all_dfs:
                 st.session_state.raw_data = pd.concat(all_dfs, ignore_index=True)
-                st.success("报表同步成功！")
+                st.success("报表已同步，请开始分析。")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传报表。当前已更新销量计算逻辑。")
+        st.info("💡 请上传报表。当前对账公式：[销售杯数 = 报表销量], [净销售杯数 = 销售杯数 - 退款数]")
         return
 
     # 数据处理
@@ -136,21 +136,21 @@ def view_dashboard():
     df_final = df_f if not sel_l2 else df_f[df_f['二级分类'].isin(sel_l2)]
 
     # --- 核心指标统计 ---
-    total_sales = df_final['销售杯数'].sum()
-    total_refunds = df_final['退款数量_raw'].sum()
+    gross_sales = df_final['销售杯数'].sum()
+    refund_count = df_final['退款数量_raw'].sum()
     net_sales = df_final['净销售杯数'].sum()
     revenue = df_final['销售金额'].sum()
     days = logic_parse_days(df_final[['统计周期']])
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("销售杯数", f"{total_sales:,.0f} 杯", help="计算逻辑：原始销量 + 退款数")
+    c1.metric("销售杯数", f"{gross_sales:,.0f} 杯", help="报表原始销量")
     c2.metric("净销售杯数", f"{net_sales:,.0f} 杯", help="计算逻辑：销售杯数 - 退款数")
     c3.metric("总营收金额", f"¥{revenue:,.2f}")
-    c4.metric("单杯均价 (净)", f"¥{revenue/net_sales if net_sales!=0 else 0:.2f}")
+    c4.metric("单杯成交均价 (净)", f"¥{revenue/net_sales if net_sales!=0 else 0:.2f}")
 
     # --- 对账明细表 ---
     st.divider()
-    st.subheader("📋 单品销量详细对账 (按名称汇总)")
+    st.subheader("📋 单品销售详细对账 (按名称汇总)")
     
     # 汇总显示
     rank = df_final.groupby(['商品名称', '二级分类']).agg({
@@ -176,4 +176,4 @@ if __name__ == "__main__":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("销量逻辑已按最新需求更新。")
+        st.info("对账逻辑已根据您的反馈彻底修正：销售杯数(830) - 退款(7) = 净销售(823)。")
