@@ -67,17 +67,6 @@ def logic_clean_data(df):
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.replace('`', '').str.strip()
     
-    # 🌟 核心改进：合并“规格”与“做法”
-    # 如果字段中有 "--" 或空值，进行清理，避免合并后出现 "-- | --"
-    spec = df['规格'].replace('--', '').replace('nan', '').fillna('')
-    method = df['做法'].replace('--', '').replace('nan', '').fillna('')
-    
-    def combine_spec_method(s, m):
-        if s and m: return f"{s} | {m}"
-        return s or m or "标准"
-        
-    df['规格/做法'] = [combine_spec_method(si, mi) for si, mi in zip(spec, method)]
-
     # 项目映射
     s2p = {str(s).strip(): p for p, stores in PROJECT_STORE_MAPPING.items() for s in stores}
     df['所属项目'] = df['门店名称'].apply(lambda x: s2p.get(x, '其他项目')).values
@@ -129,7 +118,7 @@ def view_dashboard():
                 st.success("报表同步成功！")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请先上传报表。系统已启用“规格/做法”合并显示模式。")
+        st.info("💡 请上传报表。当前明细表已切换至“单品总额汇总”模式（忽略规格与做法）。")
         return
 
     # 数据处理
@@ -158,7 +147,7 @@ def view_dashboard():
     sel_l2 = st.sidebar.multiselect("商品类别 (二级)", sorted(df_f['二级分类'].unique()))
     df_final = df_f if not sel_l2 else df_f[df_f['二级分类'].isin(sel_l2)]
 
-    # --- 数据看板 ---
+    # --- 数据看板核心指标 ---
     q, a = df_final['销售数量'].sum(), df_final['销售金额'].sum()
     days = logic_parse_days(df_final[['统计周期']])
     
@@ -168,7 +157,7 @@ def view_dashboard():
     c3.metric("日均营收", f"¥{a/days:,.2f}")
     c4.metric("单杯均价", f"¥{a/q if q>0 else 0:.2f}")
 
-    # --- 可视化 ---
+    # --- 图表可视化 ---
     import plotly.express as px
     st.divider()
     col_l, col_r = st.columns([3, 2])
@@ -182,9 +171,14 @@ def view_dashboard():
         c_sum = df_final.groupby('一级分类')['销售金额'].sum().reset_index()
         st.plotly_chart(px.pie(c_sum, values='销售金额', names='一级分类', hole=0.4), use_container_width=True)
 
-    st.subheader("📋 单品明细 (按杯数排行)")
-    # 🌟 聚合时使用合并后的字段
-    rank = df_final.groupby(['商品名称', '二级分类', '规格/做法']).agg({'销售数量':'sum', '销售金额':'sum'}).sort_values('销售数量', ascending=False)
+    # --- 🌟 商品明细表：执行“去规格化”汇总 ---
+    st.subheader("📋 单品销售排行 (按名称汇总)")
+    # 汇总逻辑：仅按 [商品名称, 二级分类] 分组，不再拆分规格和做法
+    rank = df_final.groupby(['商品名称', '二级分类']).agg({
+        '销售数量': 'sum',
+        '销售金额': 'sum'
+    }).sort_values('销售数量', ascending=False)
+    
     st.dataframe(rank, use_container_width=True)
 
 if __name__ == "__main__":
@@ -194,4 +188,4 @@ if __name__ == "__main__":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("数据看板已对齐。单品明细现已合并规格与做法显示。")
+        st.info("单品已实现名称汇总，您可以开始规划对应单品的原料成本了。")
