@@ -94,7 +94,8 @@ CATEGORY_MAPPING = [
     {"一级分类": "咖啡饮品", "二级分类": "果C美式"}, {"一级分类": "咖啡饮品", "二级分类": "手冲咖啡"},
     {"一级分类": "咖啡饮品", "二级分类": "风味拿铁"}, {"一级分类": "咖啡饮品", "二级分类": "SOE冷萃"},
     {"一级分类": "非咖啡饮品", "二级分类": "原叶轻乳茶"}, {"一级分类": "非咖啡饮品", "二级分类": "活力酸奶"},
-    {"一级分类": "非咖啡饮品", "二级分类": "经典鲜果茶"}, {"一级分类": "非咖啡饮品", "二级分类": "手打柠"}
+    {"一级分类": "非咖啡饮品", "二级分类": "经典鲜果茶"}, {"一级分类": "非咖啡饮品", "二级分类": "手打柠"},
+    {"一级分类": "非咖啡饮品", "二级分类": "清爽果茶"}, {"一级分类": "非咖啡饮品", "二级分类": "新鲜果蔬汁"}
 ]
 
 def logic_parse_days(date_series):
@@ -110,14 +111,15 @@ def logic_parse_days(date_series):
 
 def logic_clean_sales(df):
     if df.empty: return df
-    # 1. 项目映射
+    # 1. 项目归属映射
     s2p = {str(s).strip(): p for p, stores in PROJECT_STORE_MAPPING.items() for s in stores}
     df['所属项目'] = df['门店名称'].apply(lambda x: s2p.get(str(x).strip(), '其他项目'))
     
-    # 2. 品类映射
+    # 2. 类别层级映射
     df_cat = pd.DataFrame(CATEGORY_MAPPING)
-    if '一级分类' in df.columns: df = df.drop(columns=['一级分类'])
-    if '二级分类' in df.columns: df = df.drop(columns=['二级分类'])
+    # 清理可能存在的旧分类列
+    for col in ['一级分类', '二级分类']:
+        if col in df.columns: df = df.drop(columns=[col])
     
     df['商品类别_clean'] = df['商品类别'].astype(str).str.strip()
     df = pd.merge(df, df_cat, left_on='商品类别_clean', right_on='二级分类', how='left')
@@ -126,7 +128,7 @@ def logic_clean_sales(df):
     return df
 
 # =============================================================================
-# 4. 前端视图层 (精装修样式)
+# 4. 前端视图层 (精装美化版)
 # =============================================================================
 def init_ui():
     st.set_page_config(page_title="顿角咖啡智能经营系统", page_icon="☕", layout="wide")
@@ -134,6 +136,8 @@ def init_ui():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         .stApp { background-color: #F8FAFC; font-family: 'Inter', sans-serif; }
+        
+        /* 指标卡美化 */
         div[data-testid="stMetric"] {
             background-color: #FFFFFF;
             padding: 25px !important;
@@ -141,6 +145,12 @@ def init_ui():
             border: 1px solid #E2E8F0 !important;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
         }
+        
+        /* 侧边栏筛选框 */
+        .stMultiSelect div[data-baseweb="select"] { border-radius: 10px; }
+        
+        /* 标题美化 */
+        h1 { color: #0F172A; font-weight: 700; }
         .recipe-card {
             background: #FFFFFF;
             padding: 18px;
@@ -155,9 +165,9 @@ def init_ui():
 def view_dashboard(db):
     st.title("📊 顿角咖啡·智能经营看板")
     
-    # --- 侧边栏：同步功能 ---
-    with st.sidebar.expander("💾 数据同步中心", expanded=False):
-        files = st.file_uploader("📥 上传企迈报表", type=["xlsx", "csv"], accept_multiple_files=True)
+    # --- 侧边栏：同步中心 ---
+    with st.sidebar.expander("💾 云端同步中心", expanded=False):
+        files = st.file_uploader("📥 上传报表", type=["xlsx", "csv"], accept_multiple_files=True)
         if files:
             for f in files:
                 df_u = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
@@ -165,64 +175,79 @@ def view_dashboard(db):
                 m = {'商品实收': '销售金额', '商品销量': '销售数量', '日期': '统计周期', '商品分类': '商品类别'}
                 df_u = df_u.rename(columns={k: v for k, v in m.items() if k in df_u.columns})
                 db.save_sales(df_u)
-            st.success("✅ 同步至云端！")
+            st.success("✅ 云端同步完成！")
             st.rerun()
 
-    # --- 侧边栏：核心筛选器 ---
-    st.sidebar.subheader("🔍 数据筛选")
+    # --- 侧边栏：智能筛选体系 ---
+    st.sidebar.markdown("### 🔍 数据筛选")
     dr = st.sidebar.date_input("分析周期", [datetime.now() - timedelta(days=7), datetime.now()])
     
     if len(dr) == 2:
         df_raw = db.fetch_sales(dr[0].strftime('%Y-%m-%d'), dr[1].strftime('%Y-%m-%d'))
         if df_raw.empty:
-            st.info("💡 云端暂无数据，请先同步报表。")
+            st.info("💡 云端暂无数据，请先上传报表。")
             return
         
-        df = logic_clean_sales(df_raw)
+        # 数据清洗与映射
+        df_clean = logic_clean_sales(df_raw)
         
-        # 1. 项目与门店筛选
-        all_projs = sorted(df['所属项目'].unique())
-        sel_proj = st.sidebar.multiselect("所属项目", all_projs, default=all_projs)
+        # 1. 项目与门店联动筛选
+        all_projs = sorted(df_clean['所属项目'].unique())
+        sel_proj = st.sidebar.multiselect("所属项目", all_projs, help="不选则默认查看全部项目")
         
-        filtered_df = df[df['所属项目'].isin(sel_proj)]
-        all_stores = sorted(filtered_df['门店名称'].unique())
-        sel_store = st.sidebar.multiselect("门店名称", all_stores, default=all_stores)
+        # 根据选中的项目缩小门店范围
+        df_temp = df_clean if not sel_proj else df_clean[df_clean['所属项目'].isin(sel_proj)]
+        all_stores = sorted(df_temp['门店名称'].unique())
+        sel_store = st.sidebar.multiselect("门店名称", all_stores)
         
-        # 2. 分类筛选
-        all_l1 = sorted(filtered_df['一级分类'].unique())
-        sel_l1 = st.sidebar.multiselect("一级分类", all_l1, default=all_l1)
+        # 2. 类别层级联动筛选
+        all_l1 = sorted(df_temp['一级分类'].unique())
+        sel_l1 = st.sidebar.multiselect("一级分类", all_l1)
         
-        filtered_df = filtered_df[filtered_df['一级分类'].isin(sel_l1)]
-        all_l2 = sorted(filtered_df['二级分类'].unique())
-        sel_l2 = st.sidebar.multiselect("二级分类", all_l2, default=all_l2)
+        # 根据选中一级分类缩小二级分类范围
+        df_temp2 = df_temp if not sel_l1 else df_temp[df_temp['一级分类'].isin(sel_l1)]
+        all_l2 = sorted(df_temp2['二级分类'].unique())
+        sel_l2 = st.sidebar.multiselect("二级分类", all_l2)
         
-        # 最终视图数据
-        df_view = filtered_df[(filtered_df['门店名称'].isin(sel_store)) & (filtered_df['二级分类'].isin(sel_l2))]
+        # --- 🌟 智能过滤执行 (不选即全选逻辑) 🌟 ---
+        df_view = df_clean.copy()
+        if sel_proj: df_view = df_view[df_view['所属项目'].isin(sel_proj)]
+        if sel_store: df_view = df_view[df_view['门店名称'].isin(sel_store)]
+        if sel_l1: df_view = df_view[df_view['一级分类'].isin(sel_l1)]
+        if sel_l2: df_view = df_view[df_view['二级分类'].isin(sel_l2)]
         
-        # --- 核心指标展示 ---
+        if df_view.empty:
+            st.warning("⚠️ 当前筛选组合下无数据，请检查筛选条件。")
+            return
+
+        # --- 核心指标计算 ---
         q, a = df_view['销售数量'].sum(), df_view['销售金额'].sum()
         days = logic_parse_days(df_view['统计周期'])
         
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("总杯数", f"{q:,.0f} 杯")
-        c2.metric("总营收", f"¥{a:,.2f}")
-        c3.metric("日均营收", f"¥{a/days:,.2f}")
-        c4.metric("单杯均价", f"¥{a/q if q>0 else 0:.2f}")
+        c1.metric("总销售杯数", f"{q:,.0f} 杯")
+        c2.metric("总营收金额", f"¥{a:,.2f}")
+        c3.metric("日均营业额", f"¥{a/days:,.2f}")
+        c4.metric("单杯平均价", f"¥{a/q if q>0 else 0:.2f}")
 
-        # --- 图表展示 ---
+        # --- 可视化展示 ---
         st.divider()
         col_l, col_r = st.columns([3, 2])
+        
         with col_l:
             st.subheader("🏗️ 项目销售分布")
             proj_sum = df_view.groupby('所属项目')['销售金额'].sum().reset_index()
-            fig = px.bar(proj_sum, x='所属项目', y='销售金额', color_discrete_sequence=['#3B82F6'], template="plotly_white")
+            fig = px.bar(proj_sum, x='所属项目', y='销售金额', 
+                         color_discrete_sequence=['#3B82F6'], template="plotly_white",
+                         text_auto='.2s')
             st.plotly_chart(fig, use_container_width=True)
+            
         with col_r:
             st.subheader("📈 细分品类占比")
             cat_sum = df_view.groupby('二级分类')['销售金额'].sum().reset_index()
             st.plotly_chart(px.pie(cat_sum, values='销售金额', names='二级分类', hole=0.4), use_container_width=True)
 
-        st.subheader("📋 单品销量榜单")
+        st.subheader("📋 单品表现详情")
         rank = df_view.groupby(['商品名称', '规格', '做法']).agg({'销售数量':'sum', '销售金额':'sum'}).sort_values('销售数量', ascending=False)
         st.dataframe(rank, use_container_width=True)
 
@@ -231,11 +256,11 @@ def view_recipes(db):
     t1, t2, t3 = st.tabs(["📦 原物料记忆库", "📋 配置构建器", "📚 云端卡库"])
     
     with t1:
-        f = st.file_uploader("同步单价档案", type=["xlsx", "csv"])
+        f = st.file_uploader("同步价格档案", type=["xlsx", "csv"])
         if f:
             df_m = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
             db.save_material(df_m)
-            st.success("✅ 云端单价已更新")
+            st.success("✅ 云端单价已锁定")
         st.dataframe(db.get_materials(), use_container_width=True, hide_index=True)
 
     with t2:
@@ -244,43 +269,43 @@ def view_recipes(db):
         if not rmats: st.warning("请先同步原物料库。"); return
         
         c1, c2 = st.columns(2)
-        tk = c1.radio("核算轨道", ["📦 物流", "🏪 门店"])
-        sc = c2.selectbox("适用项目", ["【全局】", "百度项目", "顿角项目", "光大项目"])
+        tk = c1.radio("核算轨道", ["📦 物流轨道", "🏪 门店轨道"])
+        sc = c2.selectbox("适用范围", ["【全局】", "百度项目", "顿角项目", "光大项目"])
         
         p1, p2, p3 = st.columns(3)
         p_name = p1.text_input("饮品名")
         p_spec = p2.selectbox("规格", ["中杯", "大杯", "常规"])
         p_meth = p3.selectbox("做法", ["去冰", "热", "正常"])
 
-        if 'ui_rows' not in st.session_state: st.session_state.ui_rows = []
+        if 'bom_rows' not in st.session_state: st.session_state.bom_rows = []
         
         new_list = []
-        for i, row in enumerate(st.session_state.ui_rows):
+        for i, row in enumerate(st.session_state.bom_rows):
             with st.container(border=True):
                 r_cols = st.columns([1, 4, 3, 1])
                 idx = rmats.index(row['物料名称']) if row['物料名称'] in rmats else 0
                 m_val = r_cols[1].selectbox(f"物料", rmats, index=idx, key=f"mat_{i}")
-                q_val = r_cols[2].number_input(f"克数", value=float(row['用量']), key=f"qty_{i}")
+                q_val = r_cols[2].number_input(f"量", value=float(row['用量']), key=f"qty_{i}")
                 new_list.append({'物料名称': m_val, '用量': q_val})
                 if r_cols[3].button("🗑️", key=f"del_{i}"):
-                    st.session_state.ui_rows.pop(i); st.rerun()
+                    st.session_state.bom_rows.pop(i); st.rerun()
         
-        st.session_state.ui_rows = new_list
+        st.session_state.bom_rows = new_list
         if st.button("➕ 新增物料行", use_container_width=True):
-            st.session_state.ui_rows.append({'物料名称': rmats[0], '用量': 0.0}); st.rerun()
+            st.session_state.bom_rows.append({'物料名称': rmats[0], '用量': 0.0}); st.rerun()
         
-        if st.button("💾 确认保存并同步", type="primary", use_container_width=True):
-            clean = [r for r in st.session_state.ui_rows if r['用量'] > 0]
+        if st.button("💾 保存至云端", type="primary", use_container_width=True):
+            clean = [r for r in st.session_state.bom_rows if r['用量'] > 0]
             if clean:
                 db.store_recipe(tk, sc, p_name, p_spec, p_meth, clean)
-                st.success("✅ 配方已存入云端！")
+                st.success("✅ 云端存储完成！")
 
     with t3:
         for r in db.get_recipes():
             with st.container():
                 st.markdown(f"""<div class='recipe-card'>
                     <b>【{r['track']}】{r['product']}</b> ({r['spec']}/{r['method']}) <span style='font-size:12px; color:#64748B;'>{r['scope']}</span><br>
-                    <small>🌿 配方：{" 、 ".join([f"{i['物料名称']}({i['用量']}g)" for i in r['items']])}</small>
+                    <small>配方：{" 、 ".join([f"{i['物料名称']}({i['用量']}g)" for i in r['items']])}</small>
                 </div>""", unsafe_allow_html=True)
 
 # =============================================================================
@@ -291,12 +316,12 @@ if __name__ == "__main__":
     if LIBS_READY:
         db_mgr = CloudDataManager()
         
-        # 侧边栏状态
+        # 侧边栏状态灯
         if db_mgr.db:
             st.sidebar.markdown('<div style="background-color:#DCFCE7; color:#166534; padding:10px; border-radius:10px; text-align:center; font-weight:600; margin-bottom:20px;">✅ 云数据库已联通</div>', unsafe_allow_html=True)
         else:
             st.sidebar.warning(f"🔒 云端待连接: {db_mgr.err}")
 
-        mode = st.sidebar.radio("功能导航", ["📊 经营看板", "⚙️ 配方中心"])
-        if mode == "📊 经营看板": view_dashboard(db_mgr)
+        app_mode = st.sidebar.radio("功能导航", ["📊 经营看板", "⚙️ 配方中心"])
+        if app_mode == "📊 经营看板": view_dashboard(db_mgr)
         else: view_recipes(db_mgr)
