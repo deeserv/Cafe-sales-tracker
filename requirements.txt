@@ -1,7 +1,8 @@
-google-cloud-firestore
-google-auth
+streamlit
 pandas
 plotly
+altair
 openpyxl
 numpy
-streamlit
+google-cloud-firestore
+google-auth
