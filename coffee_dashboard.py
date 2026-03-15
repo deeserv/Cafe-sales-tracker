@@ -3,13 +3,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # =============================================================================
-# 1. 业务逻辑配置：映射关系与分类规则
+# 1. 业务逻辑配置
 # =============================================================================
 PROJECT_STORE_MAPPING = {
-    "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度大厦店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
+    "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）", "度咖啡（百度奎科店）"],
     "顿角项目": ["中信建投店", "北京移动美惠大厦店", "嘉铭中心店", "天津联想创新科技园店", "小米上海店", "快手万家灯火店", "悦读+车公庄店", "悦读+阜成路店", "新华三集团店", "科大讯飞店", "网易店", "联想总部店", "顿角咖啡研发中心店[高科岭]"],
     "光大项目": ["光大咖啡上地店", "光大咖啡上海分行店", "光大咖啡总行店"]
 }
@@ -21,21 +21,17 @@ CATEGORY_RULES = {
 }
 
 # =============================================================================
-# 2. 核心算法：数据处理引擎
+# 2. 核心算法：数据处理引擎 (多维度对账)
 # =============================================================================
-def logic_parse_days(date_series):
-    if date_series.empty: return 1
-    s = date_series.iloc[:, 0] if isinstance(date_series, pd.DataFrame) else date_series
-    return max(1, s.nunique())
-
 def logic_clean_data(df):
     if df.empty: return df
     
     df = df.copy().reset_index(drop=True)
+    # 暴力清理表头
     df.columns = [str(c).strip().replace('\n', '').replace('\r', '').replace('`', '') for c in df.columns]
     
     rename_map = {
-        '日期': '统计周期',
+        '日期': '日期',
         '门店名称': '门店名称',
         '商品类别': '二级分类_原始',
         '商品实收': '销售金额_raw',
@@ -49,7 +45,7 @@ def logic_clean_data(df):
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
     df['退款数量_raw'] = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
-    # 对账逻辑
+    # 核心计算逻辑
     df['销售杯数'] = df['销售数量_raw']
     df['净销售杯数'] = df['销售杯数'] - df['退款数量_raw']
     df['销售金额'] = df['销售金额_raw']
@@ -59,10 +55,14 @@ def logic_clean_data(df):
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.replace('`', '').str.strip()
     
+    # 日期标准化
+    df['日期'] = pd.to_datetime(df['日期']).dt.strftime('%Y-%m-%d')
+    
     # 项目映射
     s2p = {str(s).strip(): p for p, stores in PROJECT_STORE_MAPPING.items() for s in stores}
     df['所属项目'] = df['门店名称'].apply(lambda x: s2p.get(x, '其他项目')).values
     
+    # 一级分类映射
     lookup = {sub: main for main, subs in CATEGORY_RULES.items() for sub in subs}
     df['二级分类'] = df['二级分类_原始'].str.strip()
     df['一级分类'] = df['二级分类'].map(lookup).fillna("其他")
@@ -70,7 +70,7 @@ def logic_clean_data(df):
     return df.reset_index(drop=True)
 
 # =============================================================================
-# 3. UI 界面美化
+# 3. UI 样式适配
 # =============================================================================
 def init_ui():
     st.set_page_config(page_title="顿角咖啡经营智能看板", page_icon="☕", layout="wide")
@@ -78,43 +78,31 @@ def init_ui():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         .stApp { background-color: #F8FAFC; font-family: 'Inter', sans-serif; }
-        section[data-testid="stSidebar"] div.stVerticalBlock { padding-top: 5rem !important; }
-        
-        /* 指标卡样式优化 */
+        section[data-testid="stSidebar"] div.stVerticalBlock { padding-top: 4rem !important; }
         div[data-testid="stMetric"] {
             background-color: #FFFFFF; padding: 15px !important;
             border-radius: 12px !important; border: 1px solid #E2E8F0 !important;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02) !important;
         }
-        /* 强制指标标签变小，防止遮挡 */
-        div[data-testid="stMetricLabel"] p {
-            font-size: 14px !important;
-            color: #64748B !important;
-            white-space: nowrap !important;
-        }
-        /* 确保指标数值不溢出 */
-        div[data-testid="stMetricValue"] div {
-            font-size: 24px !important;
-            font-weight: 700 !important;
-        }
+        div[data-testid="stMetricLabel"] p { font-size: 14px !important; color: #64748B !important; }
+        div[data-testid="stMetricValue"] div { font-size: 24px !important; font-weight: 700 !important; }
     </style>
     """, unsafe_allow_html=True)
 
+# =============================================================================
+# 4. 视图：分析看板
+# =============================================================================
 def view_dashboard():
-    st.title("📊 顿角咖啡·智能经营看板")
+    st.title("📊 顿角咖啡·智能经营分析")
     
     if 'raw_data' not in st.session_state: st.session_state.raw_data = pd.DataFrame()
 
-    with st.sidebar.expander("📥 数据上传", expanded=True):
-        files = st.file_uploader("上传企迈报表", type=["xlsx", "csv"], accept_multiple_files=True)
+    with st.sidebar.expander("📥 数据中心 (支持多文件上传)", expanded=True):
+        files = st.file_uploader("点击上传企迈报表", type=["xlsx", "csv"], accept_multiple_files=True)
         if files:
             all_dfs = []
             for f in files:
                 try:
-                    if f.name.endswith('.csv'):
-                        try: df = pd.read_csv(f, encoding='utf-8')
-                        except: df = pd.read_csv(f, encoding='gbk')
-                    else: df = pd.read_excel(f)
+                    df = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
                     all_dfs.append(df)
                 except: pass
             if all_dfs:
@@ -122,59 +110,103 @@ def view_dashboard():
                 st.success("数据已同步")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传报表。")
+        st.info("💡 请上传至少一份报表以开始分析。支持上传多个日期的文件进行环比分析。")
         return
 
-    df_clean = logic_clean_data(st.session_state.raw_data)
+    # 全量清洗
+    df_full = logic_clean_data(st.session_state.raw_data)
     
+    # --- 侧边栏：时间与维度中心 ---
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 维度筛选")
-    sel_proj = st.sidebar.multiselect("所属项目", sorted(df_clean['所属项目'].unique()))
-    df_f = df_clean if not sel_proj else df_clean[df_clean['所属项目'].isin(sel_proj)]
+    st.sidebar.subheader("📅 时间控制")
     
-    sel_store = st.sidebar.multiselect("门店名称", sorted(df_f['门店名称'].unique()))
-    df_f = df_f if not sel_store else df_f[df_f['门店名称'].isin(sel_store)]
+    # 获取可用日期列表
+    available_dates = sorted(df_full['日期'].unique(), reverse=True)
     
-    sel_l1 = st.sidebar.multiselect("一级分类", sorted(df_f['一级分类'].unique()))
-    df_f = df_f if not sel_l1 else df_f[df_f['一级分类'].isin(sel_l1)]
+    # 1. 选择当前查看日期
+    curr_date = st.sidebar.selectbox("选择当前查看日期", available_dates)
     
-    sel_l2 = st.sidebar.multiselect("商品类别 (二级)", sorted(df_f['二级分类'].unique()))
-    df_final = df_f if not sel_l2 else df_f[df_f['二级分类'].isin(sel_l2)]
+    # 2. 环比设置
+    enable_compare = st.sidebar.checkbox("开启环比对比分析")
+    comp_date = None
+    if enable_compare:
+        remaining_dates = [d for d in available_dates if d != curr_date]
+        if remaining_dates:
+            comp_date = st.sidebar.selectbox("选择对比日期", remaining_dates)
+        else:
+            st.sidebar.warning("数据量不足，无法对比")
 
-    # --- 核心指标统计 ---
-    gross_sales = df_final['销售杯数'].sum()
-    refund_count = df_final['退款数量_raw'].sum()
-    net_sales = df_final['净销售杯数'].sum()
-    revenue = df_final['销售金额'].sum()
-    days = logic_parse_days(df_final[['统计周期']])
+    st.sidebar.subheader("🔍 筛选器")
+    # 项目筛选 (基于当前选择的日期过滤门店列表)
+    df_curr_pool = df_full[df_full['日期'] == curr_date]
+    sel_proj = st.sidebar.multiselect("所属项目", sorted(df_full['所属项目'].unique()))
     
-    # 🌟 调整指标展示为两行，防止由于列数过多导致的显示不全
-    st.subheader("💡 核心对账指标")
+    # 筛选逻辑：如果是对比模式，两边都要筛选
+    def apply_filters(data, projects):
+        if not projects: return data
+        return data[data['所属项目'].isin(projects)]
+
+    # 获取当前日期和对比日期的数据集
+    df_curr = df_full[df_full['日期'] == curr_date]
+    df_curr = apply_filters(df_curr, sel_proj)
+    
+    df_comp = pd.DataFrame()
+    if enable_compare and comp_date:
+        df_comp = df_full[df_full['日期'] == comp_date]
+        df_comp = apply_filters(df_comp, sel_proj)
+
+    # --- 数据汇总计算 ---
+    def get_metrics(data):
+        if data.empty: return 0, 0, 0, 0
+        return data['销售杯数'].sum(), data['退款数量_raw'].sum(), data['净销售杯数'].sum(), data['销售金额'].sum()
+
+    curr_gross, curr_refund, curr_net, curr_rev = get_metrics(df_curr)
+    comp_gross, comp_refund, comp_net, comp_rev = get_metrics(df_comp)
+
+    # 计算差值 (Delta)
+    def calc_delta(curr, comp):
+        if not enable_compare or comp == 0: return None
+        return curr - comp
+
+    # --- 顶层指标卡展示 ---
+    st.subheader(f"📅 当前视图：{curr_date}" + (f" vs {comp_date}" if enable_compare else ""))
+    
+    # 第一行：销量对账
     c1, c2, c3 = st.columns(3)
-    c1.metric("销售杯数 (总)", f"{gross_sales:,.0f} 杯")
-    c2.metric("退款杯数 (-)", f"{refund_count:,.0f} 杯")
-    c3.metric("净销售杯数 (=)", f"{net_sales:,.0f} 杯")
+    c1.metric("销售杯数 (总)", f"{curr_gross:,.0f} 杯", delta=calc_delta(curr_gross, comp_gross))
+    c2.metric("退款杯数 (-)", f"{curr_refund:,.0f} 杯", delta=calc_delta(curr_refund, comp_refund), delta_color="inverse")
+    c3.metric("净销售杯数 (=)", f"{curr_net:,.0f} 杯", delta=calc_delta(curr_net, comp_net))
     
-    st.markdown("<br>", unsafe_allow_html=True) # 增加间距
+    st.markdown("<br>", unsafe_allow_html=True)
     
+    # 第二行：财务核心
     c4, c5 = st.columns(2)
-    c4.metric("总营收金额 (净)", f"¥{revenue:,.2f}")
-    c5.metric("单杯成交均价 (净)", f"¥{revenue/net_sales if net_sales!=0 else 0:.2f}")
+    c4.metric("总营收金额 (实收)", f"¥{curr_rev:,.2f}", delta=calc_delta(curr_rev, comp_rev))
+    avg_price = curr_rev / curr_net if curr_net != 0 else 0
+    comp_avg = comp_rev / comp_net if comp_net != 0 else 0
+    c5.metric("单杯均价 (净)", f"¥{avg_price:.2f}", delta=calc_delta(avg_price, comp_avg))
 
-    # --- 对账明细表 ---
+    # --- 商品对比表格 ---
     st.divider()
-    st.subheader("📋 单品销售详细对账 (按名称汇总)")
-    rank = df_final.groupby(['商品名称', '二级分类']).agg({
+    st.subheader("📋 单品表现详情")
+    
+    # 汇总当前单品
+    rank_curr = df_curr.groupby(['商品名称', '二级分类']).agg({
         '销售杯数': 'sum',
         '退款数量_raw': 'sum',
         '净销售杯数': 'sum',
         '销售金额': 'sum'
-    }).rename(columns={
-        '退款数量_raw': '退款杯数',
-        '销售金额': '营收金额'
-    })
-    rank = rank[(rank['销售杯数'] != 0) | (rank['净销售杯数'] != 0)]
-    st.dataframe(rank.sort_values('净销售杯数', ascending=False), use_container_width=True)
+    }).rename(columns={'销售金额': '营收金额', '退款数量_raw': '退款杯数'})
+
+    if enable_compare and not df_comp.empty:
+        rank_comp = df_comp.groupby(['商品名称', '二级分类']).agg({'净销售杯数': 'sum'}).rename(columns={'净销售杯数': '对比日期净销量'})
+        # 合并对比列
+        display_df = rank_curr.merge(rank_comp, on=['商品名称', '二级分类'], how='left').fillna(0)
+        display_df['销量变化'] = display_df['净得杯数'] if '净得杯数' in display_df else display_df['净销售杯数'] - display_df['对比日期净销量']
+    else:
+        display_df = rank_curr
+
+    st.dataframe(display_df.sort_values('净销售杯数', ascending=False), use_container_width=True)
 
 if __name__ == "__main__":
     init_ui()
@@ -183,4 +215,4 @@ if __name__ == "__main__":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("UI 适配已完成。")
+        st.info("日期与环比分析已就绪。")
