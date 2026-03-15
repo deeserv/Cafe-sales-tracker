@@ -4,5 +4,3 @@ plotly
 altair
 openpyxl
 numpy
-google-cloud-firestore
-google-auth
