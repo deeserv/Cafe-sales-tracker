@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta
 
 # =============================================================================
-# 1. 业务逻辑配置：核心分类规则
+# 1. 业务逻辑配置
 # =============================================================================
 PROJECT_STORE_MAPPING = {
     "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度大厦店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
@@ -14,23 +14,14 @@ PROJECT_STORE_MAPPING = {
     "光大项目": ["光大咖啡上地店", "光大咖啡上海分行店", "光大咖啡总行店"]
 }
 
-# 分类规则库
 CATEGORY_RULES = {
-    "咖啡饮品": [
-        "风味拿铁", "冰爽果咖", "SOE 冷萃", "SOE冷萃", "中式茶咖", "甄选咖啡", "优选咖啡", 
-        "常规咖啡", "拿铁系列", "美式家族", "拿铁家族", "果C美式", "经典意式"
-    ],
-    "非咖啡饮品": [
-        "清爽果茶", "手打柠", "新鲜果蔬汁", "原叶轻乳茶", "活力酸奶", "经典鲜果茶", 
-        "柠檬茶", "原叶鲜奶茶", "经典奶茶", "不喝咖啡", "经典果茶", "果茶系列", "乳茶系列"
-    ],
-    "食品": [
-        "多乐之日", "轻食甜品", "餐厅产品", "现烤烘焙", "烘焙甜品"
-    ]
+    "咖啡饮品": ["风味拿铁", "冰爽果咖", "SOE 冷萃", "SOE冷萃", "中式茶咖", "甄选咖啡", "优选咖啡", "常规咖啡", "拿铁系列", "美式家族", "拿铁家族", "果C美式", "经典意式"],
+    "非咖啡饮品": ["清爽果茶", "手打柠", "新鲜果蔬汁", "原叶轻乳茶", "活力酸奶", "经典鲜果茶", "柠檬茶", "原叶鲜奶茶", "经典奶茶", "不喝咖啡", "经典果茶", "果茶系列", "乳茶系列"],
+    "食品": ["多乐之日", "轻食甜品", "餐厅产品", "现烤烘焙", "烘焙甜品"]
 }
 
 # =============================================================================
-# 2. 核心算法：数据处理引擎 (严格数学逻辑)
+# 2. 核心算法：数据处理引擎
 # =============================================================================
 def logic_parse_days(date_series):
     if date_series.empty: return 1
@@ -40,11 +31,9 @@ def logic_parse_days(date_series):
 def logic_clean_data(df):
     if df.empty: return df
     
-    # 重置索引并初步清理列名
     df = df.copy().reset_index(drop=True)
     df.columns = [str(c).strip().replace('\n', '').replace('\r', '').replace('`', '') for c in df.columns]
     
-    # 映射关键列名
     rename_map = {
         '日期': '统计周期',
         '门店名称': '门店名称',
@@ -60,11 +49,11 @@ def logic_clean_data(df):
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
     refund = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
-    # 🌟 严格数学逻辑：净销量 = 销量 - 退款 (允许负数)
+    # 严格数学逻辑
     df['销售数量'] = df['销售数量_raw'] - refund
     df['销售金额'] = df['销售金额_raw']
     
-    # 清理所有字符串字段中的反引号
+    # 字符串清理
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.replace('`', '').str.strip()
@@ -73,7 +62,7 @@ def logic_clean_data(df):
     s2p = {str(s).strip(): p for p, stores in PROJECT_STORE_MAPPING.items() for s in stores}
     df['所属项目'] = df['门店名称'].apply(lambda x: s2p.get(x, '其他项目')).values
     
-    # 一级分类映射逻辑
+    # 一级分类映射
     lookup = {sub: main for main, subs in CATEGORY_RULES.items() for sub in subs}
     df['二级分类'] = df['二级分类_原始'].str.strip()
     df['一级分类'] = df['二级分类'].map(lookup).fillna("其他")
@@ -81,7 +70,7 @@ def logic_clean_data(df):
     return df.reset_index(drop=True)
 
 # =============================================================================
-# 3. UI 界面与 CSS
+# 3. UI 界面
 # =============================================================================
 def init_ui():
     st.set_page_config(page_title="顿角咖啡经营智能看板", page_icon="☕", layout="wide")
@@ -95,6 +84,7 @@ def init_ui():
             border-radius: 20px !important; border: 1px solid #E2E8F0 !important;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
         }
+        .stDataFrame { background-color: #FFFFFF; border-radius: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -120,16 +110,19 @@ def view_dashboard():
                 st.success("报表同步成功！")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传报表。当前采用严格数学逻辑计算销量（允许显示负数）。")
+        st.info("💡 请先上传报表。")
         return
 
     # 数据处理
     df_clean = logic_clean_data(st.session_state.raw_data)
     
-    # --- 筛选体系 ---
+    # --- 筛选与设置 ---
     st.sidebar.markdown("---")
+    st.sidebar.subheader("⚙️ 显示设置")
+    # 🌟 新功能：允许用户切换是否查看 0 值商品，解释那 7 个差值
+    show_zero = st.sidebar.toggle("显示零销售单品", value=False, help="开启后将显示杯数和金额均为 0 的单品")
+
     st.sidebar.subheader("🔍 维度筛选")
-    
     sel_proj = st.sidebar.multiselect("所属项目", sorted(df_clean['所属项目'].unique()))
     df_f = df_clean if not sel_proj else df_clean[df_clean['所属项目'].isin(sel_proj)]
     
@@ -142,48 +135,53 @@ def view_dashboard():
     sel_l2 = st.sidebar.multiselect("商品类别 (二级)", sorted(df_f['二级分类'].unique()))
     df_final = df_f if not sel_l2 else df_f[df_f['二级分类'].isin(sel_l2)]
 
-    # --- 数据看板核心指标 ---
+    # --- 核心数据统计 ---
     q, a = df_final['销售数量'].sum(), df_final['销售金额'].sum()
     days = logic_parse_days(df_final[['统计周期']])
     
     c1, c2, c3, c4 = st.columns(4)
-    # 🌟 这里的 q 会如实显示负数
-    c1.metric("销售杯数 (净值)", f"{q:,.0f} 杯", help="计算逻辑：销售数量 - 退款数量")
+    c1.metric("净销售杯数", f"{q:,.0f} 杯")
     c2.metric("总营收金额", f"¥{a:,.2f}")
     c3.metric("日均营收", f"¥{a/days:,.2f}")
     c4.metric("单杯均价", f"¥{a/q if q!=0 else 0:.2f}")
 
-    # --- 可视化 ---
-    import plotly.express as px
+    # --- 对账诊断看板 ---
     st.divider()
+    diag_col1, diag_col2 = st.columns(2)
+    with diag_col1:
+        raw_rows = len(df_final)
+        st.write(f"📄 **当前筛选原始行数**: {raw_rows}")
+        st.caption("提示：Excel 中的行数。如果 Excel 有餐段区分，同一商品会有多行。")
+    with diag_col2:
+        # 汇总
+        rank = df_final.groupby(['商品名称', '二级分类']).agg({'销售数量': 'sum', '销售金额': 'sum'})
+        if not show_zero:
+            rank = rank[(rank['销售数量'] != 0) | (rank['销售金额'] != 0)]
+        
+        unique_items = len(rank)
+        st.write(f"📦 **合并后单品总数**: {unique_items}")
+        st.caption("提示：名称去重并汇总后的单品数量。")
+
+    # --- 可视化 ---
     col_l, col_r = st.columns([3, 2])
     with col_l:
         st.subheader("🏗️ 项目营收排行")
         p_sum = df_final.groupby('所属项目')['销售金额'].sum().reset_index()
-        fig = px.bar(p_sum, x='所属项目', y='销售金额', color='所属项目', template="plotly_white", text_auto='.2s')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(px.bar(p_sum, x='所属项目', y='销售金额', color='所属项目', template="plotly_white", text_auto='.2s'), use_container_width=True)
     with col_r:
         st.subheader("📈 一级分类占比")
         c_sum = df_final.groupby('一级分类')['销售金额'].sum().reset_index()
         st.plotly_chart(px.pie(c_sum, values='销售金额', names='一级分类', hole=0.4), use_container_width=True)
 
-    # --- 商品明细表：汇总并过滤 ---
     st.subheader("📋 单品销售排行 (去规格汇总)")
-    rank = df_final.groupby(['商品名称', '二级分类']).agg({
-        '销售数量': 'sum',
-        '销售金额': 'sum'
-    })
-    
-    # 🌟 核心修复：0 就看成是没有 (不显示)，但 -1 等负数会如实显示
-    rank = rank[(rank['销售数量'] != 0) | (rank['销售金额'] != 0)].sort_values('销售数量', ascending=False)
-    
-    st.dataframe(rank, use_container_width=True)
+    st.dataframe(rank.sort_values('销售数量', ascending=False), use_container_width=True)
 
 if __name__ == "__main__":
     init_ui()
+    import plotly.express as px
     menu = st.sidebar.radio("系统导航", ["📊 经营看板", "⚙️ 配方中心"])
     if menu == "📊 经营看板":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("严格数学逻辑已上线。")
+        st.info("对账诊断逻辑已上线。您可以核对原始行数与单品数的差异。")
