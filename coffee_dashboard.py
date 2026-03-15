@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta
 
 # =============================================================================
-# 1. 业务逻辑配置：核心分类规则
+# 1. 业务逻辑配置：核心分类规则 (已补录：经典意式)
 # =============================================================================
 PROJECT_STORE_MAPPING = {
     "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
@@ -14,10 +14,11 @@ PROJECT_STORE_MAPPING = {
     "光大项目": ["光大咖啡上地店", "光大咖啡上海分行店", "光大咖啡总行店"]
 }
 
+# 🌟 分类规则库：已补录“经典意式”进入咖啡饮品
 CATEGORY_RULES = {
     "咖啡饮品": [
         "风味拿铁", "冰爽果咖", "SOE 冷萃", "SOE冷萃", "中式茶咖", "甄选咖啡", "优选咖啡", 
-        "常规咖啡", "拿铁系列", "美式家族", "拿铁家族", "果C美式"
+        "常规咖啡", "拿铁系列", "美式家族", "拿铁家族", "果C美式", "经典意式"
     ],
     "非咖啡饮品": [
         "清爽果茶", "手打柠", "新鲜果蔬汁", "原叶轻乳茶", "活力酸奶", "经典鲜果茶", 
@@ -59,6 +60,7 @@ def logic_clean_data(df):
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
     refund = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
+    # 净销量 = 销量 - 退款
     df['销售数量'] = df['销售数量_raw'] - refund
     df['销售金额'] = df['销售金额_raw']
     
@@ -118,7 +120,7 @@ def view_dashboard():
                 st.success("报表同步成功！")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传报表。当前明细表已切换至“单品总额汇总”模式（忽略规格与做法）。")
+        st.info("💡 请上传报表。系统已补录“经典意式”分类，并启用“单品名称去规格汇总”模式。")
         return
 
     # 数据处理
@@ -157,7 +159,7 @@ def view_dashboard():
     c3.metric("日均营收", f"¥{a/days:,.2f}")
     c4.metric("单杯均价", f"¥{a/q if q>0 else 0:.2f}")
 
-    # --- 图表可视化 ---
+    # --- 可视化 ---
     import plotly.express as px
     st.divider()
     col_l, col_r = st.columns([3, 2])
@@ -171,9 +173,8 @@ def view_dashboard():
         c_sum = df_final.groupby('一级分类')['销售金额'].sum().reset_index()
         st.plotly_chart(px.pie(c_sum, values='销售金额', names='一级分类', hole=0.4), use_container_width=True)
 
-    # --- 🌟 商品明细表：执行“去规格化”汇总 ---
+    # --- 商品明细表：执行“去规格化”汇总 ---
     st.subheader("📋 单品销售排行 (按名称汇总)")
-    # 汇总逻辑：仅按 [商品名称, 二级分类] 分组，不再拆分规格和做法
     rank = df_final.groupby(['商品名称', '二级分类']).agg({
         '销售数量': 'sum',
         '销售金额': 'sum'
@@ -188,4 +189,4 @@ if __name__ == "__main__":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("单品已实现名称汇总，您可以开始规划对应单品的原料成本了。")
+        st.info("“经典意式”已成功归入咖啡饮品分类。")
