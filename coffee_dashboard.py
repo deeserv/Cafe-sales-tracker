@@ -21,7 +21,7 @@ CATEGORY_RULES = {
 }
 
 # =============================================================================
-# 2. 核心算法：数据处理引擎 (精准对账逻辑)
+# 2. 核心算法：数据处理引擎
 # =============================================================================
 def logic_parse_days(date_series):
     if date_series.empty: return 1
@@ -49,13 +49,9 @@ def logic_clean_data(df):
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
     df['退款数量_raw'] = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
-    # 核心对账逻辑：
-    # 1. 销售杯数 = 报表原始销量
+    # 对账逻辑
     df['销售杯数'] = df['销售数量_raw']
-    # 2. 净销售杯数 = 销售杯数 - 退款数
     df['净销售杯数'] = df['销售杯数'] - df['退款数量_raw']
-    
-    # 金额保持原始实收
     df['销售金额'] = df['销售金额_raw']
     
     # 字符串清理
@@ -67,7 +63,6 @@ def logic_clean_data(df):
     s2p = {str(s).strip(): p for p, stores in PROJECT_STORE_MAPPING.items() for s in stores}
     df['所属项目'] = df['门店名称'].apply(lambda x: s2p.get(x, '其他项目')).values
     
-    # 一级分类映射
     lookup = {sub: main for main, subs in CATEGORY_RULES.items() for sub in subs}
     df['二级分类'] = df['二级分类_原始'].str.strip()
     df['一级分类'] = df['二级分类'].map(lookup).fillna("其他")
@@ -85,11 +80,22 @@ def init_ui():
         .stApp { background-color: #F8FAFC; font-family: 'Inter', sans-serif; }
         section[data-testid="stSidebar"] div.stVerticalBlock { padding-top: 5rem !important; }
         
-        /* 响应式指标卡 */
+        /* 指标卡样式优化 */
         div[data-testid="stMetric"] {
-            background-color: #FFFFFF; padding: 20px !important;
-            border-radius: 15px !important; border: 1px solid #E2E8F0 !important;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+            background-color: #FFFFFF; padding: 15px !important;
+            border-radius: 12px !important; border: 1px solid #E2E8F0 !important;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02) !important;
+        }
+        /* 强制指标标签变小，防止遮挡 */
+        div[data-testid="stMetricLabel"] p {
+            font-size: 14px !important;
+            color: #64748B !important;
+            white-space: nowrap !important;
+        }
+        /* 确保指标数值不溢出 */
+        div[data-testid="stMetricValue"] div {
+            font-size: 24px !important;
+            font-weight: 700 !important;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -100,7 +106,7 @@ def view_dashboard():
     if 'raw_data' not in st.session_state: st.session_state.raw_data = pd.DataFrame()
 
     with st.sidebar.expander("📥 数据上传", expanded=True):
-        files = st.file_uploader("上传企迈报表 (CSV/XLSX)", type=["xlsx", "csv"], accept_multiple_files=True)
+        files = st.file_uploader("上传企迈报表", type=["xlsx", "csv"], accept_multiple_files=True)
         if files:
             all_dfs = []
             for f in files:
@@ -113,16 +119,14 @@ def view_dashboard():
                 except: pass
             if all_dfs:
                 st.session_state.raw_data = pd.concat(all_dfs, ignore_index=True)
-                st.success("报表已同步，请开始分析。")
+                st.success("数据已同步")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传报表。当前对账公式：[销售杯数] - [退款杯数] = [净销售杯数]")
+        st.info("💡 请上传报表。")
         return
 
-    # 数据处理
     df_clean = logic_clean_data(st.session_state.raw_data)
     
-    # --- 筛选与设置 ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔍 维度筛选")
     sel_proj = st.sidebar.multiselect("所属项目", sorted(df_clean['所属项目'].unique()))
@@ -144,19 +148,22 @@ def view_dashboard():
     revenue = df_final['销售金额'].sum()
     days = logic_parse_days(df_final[['统计周期']])
     
-    # 🌟 调整为 5 列显示，让对账一目了然
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("销售杯数", f"{gross_sales:,.0f} 杯", help="报表原始销量（含退款）")
-    c2.metric("退款杯数", f"{refund_count:,.0f} 杯", help="报表记录的退款总数")
-    c3.metric("净销售杯数", f"{net_sales:,.0f} 杯", help="计算逻辑：销售杯数 - 退款数")
-    c4.metric("总营收金额", f"¥{revenue:,.2f}")
-    c5.metric("单杯均价 (净)", f"¥{revenue/net_sales if net_sales!=0 else 0:.2f}")
+    # 🌟 调整指标展示为两行，防止由于列数过多导致的显示不全
+    st.subheader("💡 核心对账指标")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("销售杯数 (总)", f"{gross_sales:,.0f} 杯")
+    c2.metric("退款杯数 (-)", f"{refund_count:,.0f} 杯")
+    c3.metric("净销售杯数 (=)", f"{net_sales:,.0f} 杯")
+    
+    st.markdown("<br>", unsafe_allow_html=True) # 增加间距
+    
+    c4, c5 = st.columns(2)
+    c4.metric("总营收金额 (净)", f"¥{revenue:,.2f}")
+    c5.metric("单杯成交均价 (净)", f"¥{revenue/net_sales if net_sales!=0 else 0:.2f}")
 
     # --- 对账明细表 ---
     st.divider()
     st.subheader("📋 单品销售详细对账 (按名称汇总)")
-    
-    # 汇总显示
     rank = df_final.groupby(['商品名称', '二级分类']).agg({
         '销售杯数': 'sum',
         '退款数量_raw': 'sum',
@@ -166,18 +173,14 @@ def view_dashboard():
         '退款数量_raw': '退款杯数',
         '销售金额': '营收金额'
     })
-    
-    # 过滤掉全 0 的行
     rank = rank[(rank['销售杯数'] != 0) | (rank['净销售杯数'] != 0)]
-    
     st.dataframe(rank.sort_values('净销售杯数', ascending=False), use_container_width=True)
 
 if __name__ == "__main__":
     init_ui()
-    import plotly.express as px
     menu = st.sidebar.radio("系统导航", ["📊 经营看板", "⚙️ 配方中心"])
     if menu == "📊 经营看板":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("对账看板已升级。新增“退款杯数”独立指标。")
+        st.info("UI 适配已完成。")
