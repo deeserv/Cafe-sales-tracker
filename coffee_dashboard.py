@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta
 
 # =============================================================================
-# 1. 业务逻辑配置
+# 1. 业务逻辑配置：映射关系与分类规则
 # =============================================================================
 PROJECT_STORE_MAPPING = {
     "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度大厦店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
@@ -21,7 +21,7 @@ CATEGORY_RULES = {
 }
 
 # =============================================================================
-# 2. 核心算法：数据处理引擎 (严格数学对账)
+# 2. 核心算法：数据处理引擎 (多维度销量逻辑)
 # =============================================================================
 def logic_parse_days(date_series):
     if date_series.empty: return 1
@@ -49,8 +49,13 @@ def logic_clean_data(df):
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
     df['退款数量_raw'] = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
-    # 🌟 严格数学逻辑：净销量 = 原始销量 - 退款
-    df['销售数量'] = df['销售数量_raw'] - df['退款数量_raw']
+    # 🌟 核心修改：遵循您的最新逻辑
+    # 1. 销售杯数 = 原始销量 + 退款数
+    df['销售杯数'] = df['销售数量_raw'] + df['退款数量_raw']
+    # 2. 净销售杯数 = 销售杯数 - 退款数
+    df['净销售杯数'] = df['销售杯数'] - df['退款数量_raw']
+    
+    # 金额保持原始实收
     df['销售金额'] = df['销售金额_raw']
     
     # 字符串清理
@@ -109,7 +114,7 @@ def view_dashboard():
                 st.success("报表同步成功！")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传报表。当前已进入“全维度对账模式”。")
+        st.info("💡 请上传报表。当前已更新销量计算逻辑。")
         return
 
     # 数据处理
@@ -130,46 +135,45 @@ def view_dashboard():
     sel_l2 = st.sidebar.multiselect("商品类别 (二级)", sorted(df_f['二级分类'].unique()))
     df_final = df_f if not sel_l2 else df_f[df_f['二级分类'].isin(sel_l2)]
 
-    # --- 核心指标统计 (基于净杯数) ---
-    q_net, a = df_final['销售数量'].sum(), df_final['销售金额'].sum()
-    q_gross = df_final['销售数量_raw'].sum()
-    q_refund = df_final['退款数量_raw'].sum()
+    # --- 核心指标统计 ---
+    total_sales = df_final['销售杯数'].sum()
+    total_refunds = df_final['退款数量_raw'].sum()
+    net_sales = df_final['净销售杯数'].sum()
+    revenue = df_final['销售金额'].sum()
     days = logic_parse_days(df_final[['统计周期']])
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("净销售杯数", f"{q_net:,.0f} 杯", help=f"原始销量: {q_gross} - 退款数: {q_refund}")
-    c2.metric("总营收金额", f"¥{a:,.2f}")
-    c3.metric("日均营收", f"¥{a/days:,.2f}")
-    c4.metric("单杯均价", f"¥{a/q_net if q_net!=0 else 0:.2f}")
+    c1.metric("销售杯数", f"{total_sales:,.0f} 杯", help="计算逻辑：原始销量 + 退款数")
+    c2.metric("净销售杯数", f"{net_sales:,.0f} 杯", help="计算逻辑：销售杯数 - 退款数")
+    c3.metric("总营收金额", f"¥{revenue:,.2f}")
+    c4.metric("单杯均价 (净)", f"¥{revenue/net_sales if net_sales!=0 else 0:.2f}")
 
     # --- 对账明细表 ---
     st.divider()
-    st.subheader("📋 单品销售对账排行 (去规格汇总)")
+    st.subheader("📋 单品销量详细对账 (按名称汇总)")
     
-    # 汇总：列出 原始、退款、净得
+    # 汇总显示
     rank = df_final.groupby(['商品名称', '二级分类']).agg({
-        '销售数量_raw': 'sum',
+        '销售杯数': 'sum',
         '退款数量_raw': 'sum',
-        '销售数量': 'sum',
+        '净销售杯数': 'sum',
         '销售金额': 'sum'
     }).rename(columns={
-        '销售数量_raw': '原始杯数',
         '退款数量_raw': '退款杯数',
-        '销售数量': '净得杯数',
         '销售金额': '营收金额'
     })
     
-    # 0 过滤逻辑
-    rank = rank[(rank['原始杯数'] != 0) | (rank['净得杯数'] != 0)]
+    # 过滤掉全 0 的行
+    rank = rank[(rank['销售杯数'] != 0) | (rank['净销售杯数'] != 0)]
     
-    st.dataframe(rank.sort_values('净得杯数', ascending=False), use_container_width=True)
+    st.dataframe(rank.sort_values('净销售杯数', ascending=False), use_container_width=True)
 
 if __name__ == "__main__":
     init_ui()
     import plotly.express as px
-    menu = st.sidebar.radio("功能导航", ["📊 经营看板", "⚙️ 配方中心"])
+    menu = st.sidebar.radio("系统导航", ["📊 经营看板", "⚙️ 配方中心"])
     if menu == "📊 经营看板":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("对账逻辑已根据您的反馈全面调优。")
+        st.info("销量逻辑已按最新需求更新。")
