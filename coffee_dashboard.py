@@ -55,8 +55,15 @@ def logic_clean_data(df):
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.replace('`', '').str.strip()
     
-    # 日期标准化
-    df['日期'] = pd.to_datetime(df['日期']).dt.strftime('%Y-%m-%d')
+    # 🌟 核心修复：处理日期中的“合计”或空值
+    # errors='coerce' 会把无法解析成日期的文字变成 NaT (空)
+    df['日期_dt'] = pd.to_datetime(df['日期'], errors='coerce')
+    
+    # 自动剔除那些无法识别日期的行（即报表底部的合计行）
+    df = df.dropna(subset=['日期_dt'])
+    
+    # 重新格式化日期字符串
+    df['日期'] = df['日期_dt'].dt.strftime('%Y-%m-%d')
     
     # 项目映射
     s2p = {str(s).strip(): p for p, stores in PROJECT_STORE_MAPPING.items() for s in stores}
@@ -83,8 +90,6 @@ def init_ui():
             background-color: #FFFFFF; padding: 15px !important;
             border-radius: 12px !important; border: 1px solid #E2E8F0 !important;
         }
-        div[data-testid="stMetricLabel"] p { font-size: 14px !important; color: #64748B !important; }
-        div[data-testid="stMetricValue"] div { font-size: 24px !important; font-weight: 700 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -102,15 +107,24 @@ def view_dashboard():
             all_dfs = []
             for f in files:
                 try:
-                    df = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
+                    # 企迈导出的 CSV 有时是 GBK 编码
+                    if f.name.endswith('.csv'):
+                        try:
+                            df = pd.read_csv(f, encoding='utf-8')
+                        except:
+                            df = pd.read_csv(f, encoding='gbk')
+                    else:
+                        df = pd.read_excel(f)
                     all_dfs.append(df)
-                except: pass
+                except Exception as e:
+                    st.sidebar.error(f"文件 {f.name} 读取失败")
+            
             if all_dfs:
                 st.session_state.raw_data = pd.concat(all_dfs, ignore_index=True)
                 st.success("数据已同步")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传至少一份报表以开始分析。支持上传多个日期的文件进行环比分析。")
+        st.info("💡 请上传报表。支持多日期文件上传以开启环比功能。")
         return
 
     # 全量清洗
@@ -137,16 +151,14 @@ def view_dashboard():
             st.sidebar.warning("数据量不足，无法对比")
 
     st.sidebar.subheader("🔍 筛选器")
-    # 项目筛选 (基于当前选择的日期过滤门店列表)
-    df_curr_pool = df_full[df_full['日期'] == curr_date]
     sel_proj = st.sidebar.multiselect("所属项目", sorted(df_full['所属项目'].unique()))
     
-    # 筛选逻辑：如果是对比模式，两边都要筛选
+    # 筛选逻辑
     def apply_filters(data, projects):
         if not projects: return data
         return data[data['所属项目'].isin(projects)]
 
-    # 获取当前日期和对比日期的数据集
+    # 获取数据集
     df_curr = df_full[df_full['日期'] == curr_date]
     df_curr = apply_filters(df_curr, sel_proj)
     
@@ -171,7 +183,6 @@ def view_dashboard():
     # --- 顶层指标卡展示 ---
     st.subheader(f"📅 当前视图：{curr_date}" + (f" vs {comp_date}" if enable_compare else ""))
     
-    # 第一行：销量对账
     c1, c2, c3 = st.columns(3)
     c1.metric("销售杯数 (总)", f"{curr_gross:,.0f} 杯", delta=calc_delta(curr_gross, comp_gross))
     c2.metric("退款杯数 (-)", f"{curr_refund:,.0f} 杯", delta=calc_delta(curr_refund, comp_refund), delta_color="inverse")
@@ -179,7 +190,6 @@ def view_dashboard():
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # 第二行：财务核心
     c4, c5 = st.columns(2)
     c4.metric("总营收金额 (实收)", f"¥{curr_rev:,.2f}", delta=calc_delta(curr_rev, comp_rev))
     avg_price = curr_rev / curr_net if curr_net != 0 else 0
@@ -188,7 +198,7 @@ def view_dashboard():
 
     # --- 商品对比表格 ---
     st.divider()
-    st.subheader("📋 单品表现详情")
+    st.subheader("📋 单品表现详情 (去规格汇总)")
     
     # 汇总当前单品
     rank_curr = df_curr.groupby(['商品名称', '二级分类']).agg({
@@ -200,9 +210,8 @@ def view_dashboard():
 
     if enable_compare and not df_comp.empty:
         rank_comp = df_comp.groupby(['商品名称', '二级分类']).agg({'净销售杯数': 'sum'}).rename(columns={'净销售杯数': '对比日期净销量'})
-        # 合并对比列
         display_df = rank_curr.merge(rank_comp, on=['商品名称', '二级分类'], how='left').fillna(0)
-        display_df['销量变化'] = display_df['净得杯数'] if '净得杯数' in display_df else display_df['净销售杯数'] - display_df['对比日期净销量']
+        display_df['销量变化'] = display_df['净销售杯数'] - display_df['对比日期净销量']
     else:
         display_df = rank_curr
 
@@ -210,9 +219,10 @@ def view_dashboard():
 
 if __name__ == "__main__":
     init_ui()
+    import plotly.express as px
     menu = st.sidebar.radio("系统导航", ["📊 经营看板", "⚙️ 配方中心"])
     if menu == "📊 经营看板":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("日期与环比分析已就绪。")
+        st.info("数据分析已就绪。")
