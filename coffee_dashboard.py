@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta
 
 # =============================================================================
-# 1. 业务逻辑配置：核心分类规则 (根据您的定义与报表实测进行扩充)
+# 1. 业务逻辑配置：核心分类规则
 # =============================================================================
 PROJECT_STORE_MAPPING = {
     "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
@@ -14,7 +14,6 @@ PROJECT_STORE_MAPPING = {
     "光大项目": ["光大咖啡上地店", "光大咖啡上海分行店", "光大咖啡总行店"]
 }
 
-# 🌟 分类规则库：增加了“系列”等宽泛匹配词
 CATEGORY_RULES = {
     "咖啡饮品": [
         "风味拿铁", "冰爽果咖", "SOE 冷萃", "SOE冷萃", "中式茶咖", "甄选咖啡", "优选咖啡", 
@@ -63,20 +62,28 @@ def logic_clean_data(df):
     df['销售数量'] = df['销售数量_raw'] - refund
     df['销售金额'] = df['销售金额_raw']
     
-    # 🌟 强力清理所有字符串字段中的不可见字符和反引号
+    # 清理所有字符串字段中的不可见字符和反引号
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.replace('`', '').str.strip()
     
+    # 🌟 核心改进：合并“规格”与“做法”
+    # 如果字段中有 "--" 或空值，进行清理，避免合并后出现 "-- | --"
+    spec = df['规格'].replace('--', '').replace('nan', '').fillna('')
+    method = df['做法'].replace('--', '').replace('nan', '').fillna('')
+    
+    def combine_spec_method(s, m):
+        if s and m: return f"{s} | {m}"
+        return s or m or "标准"
+        
+    df['规格/做法'] = [combine_spec_method(si, mi) for si, mi in zip(spec, method)]
+
     # 项目映射
     s2p = {str(s).strip(): p for p, stores in PROJECT_STORE_MAPPING.items() for s in stores}
     df['所属项目'] = df['门店名称'].apply(lambda x: s2p.get(x, '其他项目')).values
     
-    # 🌟 映射一级分类逻辑
-    # 建立映射字典：二级 -> 一级
+    # 映射一级分类逻辑
     lookup = {sub: main for main, subs in CATEGORY_RULES.items() for sub in subs}
-    
-    # 确保二级分类被清理干净再匹配
     df['二级分类'] = df['二级分类_原始'].str.strip()
     df['一级分类'] = df['二级分类'].map(lookup).fillna("其他")
     
@@ -122,7 +129,7 @@ def view_dashboard():
                 st.success("报表同步成功！")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请先上传报表。系统已启用“分类加固”模式，确保一级分类数据对齐。")
+        st.info("💡 请先上传报表。系统已启用“规格/做法”合并显示模式。")
         return
 
     # 数据处理
@@ -131,10 +138,9 @@ def view_dashboard():
     # --- 辅助诊断工具 ---
     others = df_clean[df_clean['一级分类'] == "其他"]
     if not others.empty:
-        with st.sidebar.expander("🕵️ 分类诊断 (发现未归类项)"):
-            st.write("以下二级分类目前被归为“其他”，导致数据可能显示不全：")
+        with st.sidebar.expander("🕵️ 分类诊断"):
+            st.write("以下二级分类目前被归为“其他”：")
             st.write(others['二级分类'].unique().tolist())
-            st.caption("您可以告诉我这些名字，我把它们加入咖啡或非咖啡分类中。")
 
     # --- 筛选体系 ---
     st.sidebar.markdown("---")
@@ -146,9 +152,7 @@ def view_dashboard():
     sel_store = st.sidebar.multiselect("门店名称", sorted(df_f['门店名称'].unique()))
     df_f = df_f if not sel_store else df_f[df_f['门店名称'].isin(sel_store)]
     
-    # 🌟 默认包含“其他”，防止数据遗失
-    l1_list = sorted(df_f['一级分类'].unique())
-    sel_l1 = st.sidebar.multiselect("一级分类", l1_list)
+    sel_l1 = st.sidebar.multiselect("一级分类", sorted(df_f['一级分类'].unique()))
     df_f = df_f if not sel_l1 else df_f[df_f['一级分类'].isin(sel_l1)]
     
     sel_l2 = st.sidebar.multiselect("商品类别 (二级)", sorted(df_f['二级分类'].unique()))
@@ -179,7 +183,8 @@ def view_dashboard():
         st.plotly_chart(px.pie(c_sum, values='销售金额', names='一级分类', hole=0.4), use_container_width=True)
 
     st.subheader("📋 单品明细 (按杯数排行)")
-    rank = df_final.groupby(['商品名称', '二级分类', '规格', '做法']).agg({'销售数量':'sum', '销售金额':'sum'}).sort_values('销售数量', ascending=False)
+    # 🌟 聚合时使用合并后的字段
+    rank = df_final.groupby(['商品名称', '二级分类', '规格/做法']).agg({'销售数量':'sum', '销售金额':'sum'}).sort_values('销售数量', ascending=False)
     st.dataframe(rank, use_container_width=True)
 
 if __name__ == "__main__":
@@ -189,4 +194,4 @@ if __name__ == "__main__":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("分类规则已升级。若仍有数据偏差，请检查侧边栏的“分类诊断”工具。")
+        st.info("数据看板已对齐。单品明细现已合并规格与做法显示。")
