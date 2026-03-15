@@ -7,12 +7,22 @@ import re
 from datetime import datetime, timedelta
 
 # =============================================================================
-# 核心驱动加固加载 (引入 FieldPath 解决中文路径报错)
+# 核心驱动加固加载 (解决 FieldPath 导入报错)
 # =============================================================================
 try:
     from google.cloud import firestore
-    from google.cloud.firestore import FieldPath  # 🌟 关键：用于处理查询中的中文字段名
     from google.oauth2 import service_account
+    
+    # --- 🌟 兼容性导入：尝试多种方式获取 FieldPath ---
+    try:
+        from google.cloud.firestore import FieldPath
+    except ImportError:
+        try:
+            from google.cloud.firestore_v1.field_path import FieldPath
+        except ImportError:
+            # 如果实在找不到，回退到普通字符串（部分版本支持直接传字符串列表）
+            FieldPath = lambda x: x
+            
     import plotly.express as px
     import plotly.graph_objects as go
     LIBS_READY = True
@@ -28,6 +38,10 @@ class CloudDataManager:
         self.db = None
         try:
             # 自动识别并解析 Secrets
+            if "textkey" not in st.secrets:
+                st.warning("🔒 未发现 Secrets 配置: 请在 Streamlit 后台添加 'textkey'。")
+                return
+
             raw_key = st.secrets["textkey"]
             if isinstance(raw_key, str):
                 key_dict = json.loads(raw_key)
@@ -37,7 +51,7 @@ class CloudDataManager:
             creds = service_account.Credentials.from_service_account_info(key_dict)
             self.db = firestore.Client(credentials=creds, project=key_dict['project_id'])
         except Exception as e:
-            st.warning(f"🔒 云数据库待连接: 请检查 Secrets 配置。提示: {e}")
+            st.warning(f"🔒 云数据库待连接: {e}")
 
     def save_sales(self, df):
         """上传流水，利用唯一ID自动去重"""
@@ -51,19 +65,19 @@ class CloudDataManager:
     def fetch_sales(self, start, end):
         """
         抓取指定周期流水
-        🌟 修复点：使用 FieldPath 显式包裹中文字段名，防止 SDK 解析出错
+        🌟 修复点：使用更稳健的路径查询方式
         """
         if not self.db: return pd.DataFrame()
         try:
-            # 将中文字段名放入 FieldPath 列表，这是解决 ValueError 的官方标准做法
-            fp = FieldPath(["统计周期"])
+            # 针对中文路径的稳健查询方式
+            path = FieldPath(["统计周期"])
             docs = self.db.collection("sales_records")\
-                    .where(fp, ">=", start)\
-                    .where(fp, "<=", end).stream()
+                    .where(path, ">=", start)\
+                    .where(path, "<=", end).stream()
             data = [doc.to_dict() for doc in docs]
             return pd.DataFrame(data)
         except Exception as e:
-            st.error(f"🔍 查询过程出错: {e}")
+            st.error(f"🔍 数据查询失败: {e}")
             return pd.DataFrame()
 
     def save_material(self, df):
@@ -152,7 +166,7 @@ def view_dashboard(db):
                 m = {'商品实收': '销售金额', '商品销量': '销售数量', '日期': '统计周期', '商品分类': '商品类别'}
                 df = df.rename(columns={k: v for k, v in m.items() if k in df.columns})
                 db.save_sales(df)
-            st.success("✅ 云端记忆已更新！")
+            st.success("✅ 云端同步成功！")
             st.rerun()
 
     dr = st.sidebar.date_input("周期选择", [datetime.now() - timedelta(days=7), datetime.now()])
@@ -173,14 +187,14 @@ def view_dashboard(db):
 
 def view_recipes(db):
     st.title("⚙️ 成本配方引擎")
-    t1, t2, t3 = st.tabs(["原物料记忆", "配置构建器", "云端卡库"])
+    t1, t2, t3 = st.tabs(["原物料库", "配置构建器", "云端卡库"])
     
     with t1:
         f = st.file_uploader("同步单价", type=["xlsx", "csv"])
         if f:
             df = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
             db.save_material(df)
-            st.success("✅ 价格记忆成功")
+            st.success("✅ 同步完成")
         st.dataframe(db.get_materials(), use_container_width=True)
 
     with t2:
@@ -212,13 +226,13 @@ def view_recipes(db):
         
         st.session_state.ui_bom_rows = new_list
         if st.button("➕ 新增物料行"):
-            st.session_state.ui_rows.append({'物料名称': rmats[0], '用量': 0.0}); st.rerun()
+            st.session_state.ui_bom_rows.append({'物料名称': rmats[0], '用量': 0.0}); st.rerun()
         
         if st.button("💾 确认并保存至云端", type="primary"):
             clean = [r for r in st.session_state.ui_bom_rows if r['用量'] > 0]
             if clean:
                 db.store_recipe(tk, sc, p_name, p_spec, p_meth, clean)
-                st.success("✅ 配方已存入云端记忆！")
+                st.success("✅ 配方已存入云端！")
 
     with t3:
         for r in db.get_recipes():
