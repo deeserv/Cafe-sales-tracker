@@ -7,22 +7,20 @@ import re
 from datetime import datetime, timedelta
 
 # =============================================================================
-# 核心驱动加固加载 (解决 FieldPath 导入报错)
+# 核心驱动加载 (优化中文路径兼容性)
 # =============================================================================
 try:
     from google.cloud import firestore
-    from google.oauth2 import service_account
-    
-    # --- 🌟 兼容性导入：尝试多种方式获取 FieldPath ---
+    # 尝试多种导入方式以兼容不同版本的云端环境
     try:
         from google.cloud.firestore import FieldPath
     except ImportError:
         try:
             from google.cloud.firestore_v1.field_path import FieldPath
         except ImportError:
-            # 如果实在找不到，回退到普通字符串（部分版本支持直接传字符串列表）
-            FieldPath = lambda x: x
+            FieldPath = None
             
+    from google.oauth2 import service_account
     import plotly.express as px
     import plotly.graph_objects as go
     LIBS_READY = True
@@ -65,15 +63,21 @@ class CloudDataManager:
     def fetch_sales(self, start, end):
         """
         抓取指定周期流水
-        🌟 修复点：使用更稳健的路径查询方式
+        🌟 修复点：改用最兼容的字符串查询方式，避开 FieldPath 列表解析错误
         """
         if not self.db: return pd.DataFrame()
         try:
-            # 针对中文路径的稳健查询方式
-            path = FieldPath(["统计周期"])
+            # 默认直接使用字符串，这是最兼容的方式
+            target_field = "统计周期"
+            
+            # 如果存在特殊的 FieldPath 对象，则使用对象包装（防止特殊字符干扰）
+            if FieldPath:
+                target_field = FieldPath(target_field)
+
             docs = self.db.collection("sales_records")\
-                    .where(path, ">=", start)\
-                    .where(path, "<=", end).stream()
+                    .where(target_field, ">=", start)\
+                    .where(target_field, "<=", end).stream()
+            
             data = [doc.to_dict() for doc in docs]
             return pd.DataFrame(data)
         except Exception as e:
@@ -158,7 +162,7 @@ def init_ui():
 def view_dashboard(db):
     st.title("📊 顿角咖啡·智能经营看板")
     with st.sidebar.expander("💾 云端同步中心", expanded=False):
-        files = st.file_uploader("上传企迈报表", type=["xlsx", "csv"], accept_multiple_files=True)
+        files = st.file_uploader("上传报表", type=["xlsx", "csv"], accept_multiple_files=True)
         if files:
             for f in files:
                 df = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
@@ -173,7 +177,7 @@ def view_dashboard(db):
     if len(dr) == 2:
         df_raw = db.fetch_sales(dr[0].strftime('%Y-%m-%d'), dr[1].strftime('%Y-%m-%d'))
         if df_raw.empty:
-            st.info("💡 云端暂无该周期数据，请先同步报表。")
+            st.info("💡 云端库暂无数据。请先在左侧上传报表并点击同步。")
             return
         
         df = logic_clean_sales(df_raw)
@@ -226,7 +230,7 @@ def view_recipes(db):
         
         st.session_state.ui_bom_rows = new_list
         if st.button("➕ 新增物料行"):
-            st.session_state.ui_bom_rows.append({'物料名称': rmats[0], '用量': 0.0}); st.rerun()
+            st.session_state.ui_bom_rows.append({'物料名称': rmats[0], '量': 0.0}); st.rerun()
         
         if st.button("💾 确认并保存至云端", type="primary"):
             clean = [r for r in st.session_state.ui_bom_rows if r['用量'] > 0]
