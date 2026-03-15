@@ -21,7 +21,7 @@ CATEGORY_RULES = {
 }
 
 # =============================================================================
-# 2. 核心算法：数据处理引擎
+# 2. 核心算法：数据处理引擎 (严格数学对账)
 # =============================================================================
 def logic_parse_days(date_series):
     if date_series.empty: return 1
@@ -47,10 +47,10 @@ def logic_clean_data(df):
     # 数值转换
     df['销售数量_raw'] = pd.to_numeric(df['销售数量_raw'], errors='coerce').fillna(0)
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
-    refund = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
+    df['退款数量_raw'] = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
-    # 严格数学逻辑
-    df['销售数量'] = df['销售数量_raw'] - refund
+    # 🌟 严格数学逻辑：净销量 = 原始销量 - 退款
+    df['销售数量'] = df['销售数量_raw'] - df['退款数量_raw']
     df['销售金额'] = df['销售金额_raw']
     
     # 字符串清理
@@ -84,7 +84,6 @@ def init_ui():
             border-radius: 20px !important; border: 1px solid #E2E8F0 !important;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
         }
-        .stDataFrame { background-color: #FFFFFF; border-radius: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -110,7 +109,7 @@ def view_dashboard():
                 st.success("报表同步成功！")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请先上传报表。")
+        st.info("💡 请上传报表。当前已进入“全维度对账模式”。")
         return
 
     # 数据处理
@@ -118,10 +117,6 @@ def view_dashboard():
     
     # --- 筛选与设置 ---
     st.sidebar.markdown("---")
-    st.sidebar.subheader("⚙️ 显示设置")
-    # 🌟 新功能：允许用户切换是否查看 0 值商品，解释那 7 个差值
-    show_zero = st.sidebar.toggle("显示零销售单品", value=False, help="开启后将显示杯数和金额均为 0 的单品")
-
     st.sidebar.subheader("🔍 维度筛选")
     sel_proj = st.sidebar.multiselect("所属项目", sorted(df_clean['所属项目'].unique()))
     df_f = df_clean if not sel_proj else df_clean[df_clean['所属项目'].isin(sel_proj)]
@@ -135,53 +130,46 @@ def view_dashboard():
     sel_l2 = st.sidebar.multiselect("商品类别 (二级)", sorted(df_f['二级分类'].unique()))
     df_final = df_f if not sel_l2 else df_f[df_f['二级分类'].isin(sel_l2)]
 
-    # --- 核心数据统计 ---
-    q, a = df_final['销售数量'].sum(), df_final['销售金额'].sum()
+    # --- 核心指标统计 (基于净杯数) ---
+    q_net, a = df_final['销售数量'].sum(), df_final['销售金额'].sum()
+    q_gross = df_final['销售数量_raw'].sum()
+    q_refund = df_final['退款数量_raw'].sum()
     days = logic_parse_days(df_final[['统计周期']])
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("净销售杯数", f"{q:,.0f} 杯")
+    c1.metric("净销售杯数", f"{q_net:,.0f} 杯", help=f"原始销量: {q_gross} - 退款数: {q_refund}")
     c2.metric("总营收金额", f"¥{a:,.2f}")
     c3.metric("日均营收", f"¥{a/days:,.2f}")
-    c4.metric("单杯均价", f"¥{a/q if q!=0 else 0:.2f}")
+    c4.metric("单杯均价", f"¥{a/q_net if q_net!=0 else 0:.2f}")
 
-    # --- 对账诊断看板 ---
+    # --- 对账明细表 ---
     st.divider()
-    diag_col1, diag_col2 = st.columns(2)
-    with diag_col1:
-        raw_rows = len(df_final)
-        st.write(f"📄 **当前筛选原始行数**: {raw_rows}")
-        st.caption("提示：Excel 中的行数。如果 Excel 有餐段区分，同一商品会有多行。")
-    with diag_col2:
-        # 汇总
-        rank = df_final.groupby(['商品名称', '二级分类']).agg({'销售数量': 'sum', '销售金额': 'sum'})
-        if not show_zero:
-            rank = rank[(rank['销售数量'] != 0) | (rank['销售金额'] != 0)]
-        
-        unique_items = len(rank)
-        st.write(f"📦 **合并后单品总数**: {unique_items}")
-        st.caption("提示：名称去重并汇总后的单品数量。")
-
-    # --- 可视化 ---
-    col_l, col_r = st.columns([3, 2])
-    with col_l:
-        st.subheader("🏗️ 项目营收排行")
-        p_sum = df_final.groupby('所属项目')['销售金额'].sum().reset_index()
-        st.plotly_chart(px.bar(p_sum, x='所属项目', y='销售金额', color='所属项目', template="plotly_white", text_auto='.2s'), use_container_width=True)
-    with col_r:
-        st.subheader("📈 一级分类占比")
-        c_sum = df_final.groupby('一级分类')['销售金额'].sum().reset_index()
-        st.plotly_chart(px.pie(c_sum, values='销售金额', names='一级分类', hole=0.4), use_container_width=True)
-
-    st.subheader("📋 单品销售排行 (去规格汇总)")
-    st.dataframe(rank.sort_values('销售数量', ascending=False), use_container_width=True)
+    st.subheader("📋 单品销售对账排行 (去规格汇总)")
+    
+    # 汇总：列出 原始、退款、净得
+    rank = df_final.groupby(['商品名称', '二级分类']).agg({
+        '销售数量_raw': 'sum',
+        '退款数量_raw': 'sum',
+        '销售数量': 'sum',
+        '销售金额': 'sum'
+    }).rename(columns={
+        '销售数量_raw': '原始杯数',
+        '退款数量_raw': '退款杯数',
+        '销售数量': '净得杯数',
+        '销售金额': '营收金额'
+    })
+    
+    # 0 过滤逻辑
+    rank = rank[(rank['原始杯数'] != 0) | (rank['净得杯数'] != 0)]
+    
+    st.dataframe(rank.sort_values('净得杯数', ascending=False), use_container_width=True)
 
 if __name__ == "__main__":
     init_ui()
     import plotly.express as px
-    menu = st.sidebar.radio("系统导航", ["📊 经营看板", "⚙️ 配方中心"])
+    menu = st.sidebar.radio("功能导航", ["📊 经营看板", "⚙️ 配方中心"])
     if menu == "📊 经营看板":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("对账诊断逻辑已上线。您可以核对原始行数与单品数的差异。")
+        st.info("对账逻辑已根据您的反馈全面调优。")
