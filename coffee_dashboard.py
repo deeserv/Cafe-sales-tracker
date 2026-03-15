@@ -10,8 +10,8 @@ from datetime import datetime, timedelta
 # =============================================================================
 PROJECT_STORE_MAPPING = {
     "光大项目": ["光大咖啡上地店", "光大咖啡上海分行店", "光大咖啡总行店"],
-    "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
-    "顿角项目": ["中信建投店", "北京移动美惠大厦店", "嘉铭中心店", "天津联想创新科技园店", "小米上海店", "快手万家灯火店", "悦读+车公庄店", "悦读+阜成路店", "新华三集团店", "科大讯飞店", "网易店", "联想总部店", "顿角咖啡研发中心店[高科岭]"]
+    "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
+    "顿角项目": ["中信建投店", "北京移动美惠大厦店", "嘉铭中心店", "天津联想创新科技园店", "小米上海店", "快手万家灯火灯", "悦读+车公庄店", "悦读+阜成路店", "新华三集团店", "科大讯飞店", "网易店", "联想总部店", "顿角咖啡研发中心店[高科岭]"]
 }
 
 CATEGORY_MAPPING = [
@@ -23,7 +23,7 @@ CATEGORY_MAPPING = [
 ]
 
 # =============================================================================
-# 2. 核心算法：数据处理与清洗 (包含强力表头修复)
+# 2. 核心算法：数据处理与清洗
 # =============================================================================
 def logic_parse_days(date_series):
     """精准解析报表天数，解决日均计算问题"""
@@ -41,9 +41,11 @@ def logic_parse_days(date_series):
 def logic_clean_data(df):
     """
     本地数据清洗与层级映射
-    🌟 步骤 A: 暴力清洗表头 (核心修复：去除空格、换行)
     """
     if df.empty: return df
+    
+    # 🌟 核心修复：重置索引，防止因重复索引导致的 reindex 错误 (ValueError: cannot reindex...)
+    df = df.reset_index(drop=True)
     
     # 清洗列名
     df.columns = [str(c).strip().replace('\n', '').replace('\r', '') for c in df.columns]
@@ -62,7 +64,7 @@ def logic_clean_data(df):
     required_cols = ['门店名称', '统计周期', '商品类别', '销售金额', '销售数量']
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        st.error(f"⚠️ 报表识别失败，当前列名为：{list(df.columns)}")
+        st.error(f"⚠️ 报表识别失败，当前检测到的列名为：{list(df.columns)}")
         st.stop()
     
     # 项目归属映射
@@ -78,24 +80,26 @@ def logic_clean_data(df):
     df = pd.merge(df, df_cat, left_on='商品类别_clean', right_on='二级分类', how='left')
     df['一级分类'] = df['一级分类'].fillna('其他')
     df['二级分类'] = df['二级分类'].fillna('其他')
-    return df
+    
+    # 再次重置索引确保万无一失
+    return df.reset_index(drop=True)
 
 # =============================================================================
-# 3. 前端 UI 样式与遮挡修复
+# 3. 前端 UI 样式定义
 # =============================================================================
 def init_ui():
-    st.set_page_config(page_title="顿角咖啡经营决策系统", page_icon="☕", layout="wide")
+    st.set_page_config(page_title="顿角咖啡经营BI系统", page_icon="☕", layout="wide")
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         .stApp { background-color: #F8FAFC; font-family: 'Inter', sans-serif; }
         
-        /* 🌟 UI 修复：侧边栏顶部留白 80px，防止日期切换按钮被遮挡 */
+        /* 🌟 UI 修复：增加侧边栏顶部间距，防止月份按钮被遮挡 */
         section[data-testid="stSidebar"] div.stVerticalBlock {
-            padding-top: 5rem !important;
+            padding-top: 4rem !important;
         }
 
-        /* 指标卡美化 */
+        /* 统一指标卡设计 */
         div[data-testid="stMetric"] {
             background-color: #FFFFFF;
             padding: 25px !important;
@@ -114,7 +118,7 @@ def view_dashboard():
     
     if 'sales_data' not in st.session_state: st.session_state.sales_data = pd.DataFrame()
 
-    with st.sidebar.expander("📥 数据上传 (本地上传)", expanded=True):
+    with st.sidebar.expander("📥 数据上传 (本地模式)", expanded=True):
         files = st.file_uploader("支持多选 xlsx/csv", type=["xlsx", "csv"], accept_multiple_files=True)
         if files:
             all_dfs = []
@@ -123,14 +127,15 @@ def view_dashboard():
                     df_u = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
                     all_dfs.append(df_u)
                 except Exception as e:
-                    st.error(f"文件加载失败: {e}")
+                    st.error(f"文件读取失败: {e}")
             
             if all_dfs:
-                st.session_state.sales_data = pd.concat(all_dfs).drop_duplicates()
-                st.success("数据已进入暂存区")
+                # 🌟 修复：使用 ignore_index=True 彻底合并行号
+                st.session_state.sales_data = pd.concat(all_dfs, ignore_index=True).drop_duplicates()
+                st.success("数据加载成功")
 
     if st.session_state.sales_data.empty:
-        st.info("💡 请在左侧上传报表以开始分析。")
+        st.info("💡 请先在左侧上传报表以开启看板。")
         return
 
     # 数据处理
@@ -139,7 +144,7 @@ def view_dashboard():
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔍 维度筛选")
     
-    # 筛选联动：项目 -> 门店
+    # 筛选联动
     all_projs = sorted(df_base['所属项目'].unique())
     sel_proj = st.sidebar.multiselect("所属项目", all_projs)
     df_f1 = df_base if not sel_proj else df_base[df_base['所属项目'].isin(sel_proj)]
@@ -147,7 +152,6 @@ def view_dashboard():
     all_stores = sorted(df_f1['门店名称'].unique())
     sel_store = st.sidebar.multiselect("门店名称", all_stores)
 
-    # 筛选联动：一级 -> 二级
     all_l1 = sorted(df_f1['一级分类'].unique())
     sel_l1 = st.sidebar.multiselect("一级分类", all_l1)
     df_f2 = df_f1 if not sel_l1 else df_f1[df_f1['一级分类'].isin(sel_l1)]
@@ -168,7 +172,7 @@ def view_dashboard():
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("总销售杯数", f"{q:,.0f} 杯")
-    c2.metric("总营收金额", f"¥{a:,.2f}")
+    c2.metric("总营收", f"¥{a:,.2f}")
     c3.metric("日均营收", f"¥{a/days:,.2f}")
     c4.metric("单杯均价", f"¥{a/q if q>0 else 0:.2f}")
 
@@ -177,15 +181,15 @@ def view_dashboard():
     st.divider()
     col_l, col_r = st.columns([3, 2])
     with col_l:
-        st.subheader("🏗️ 销售贡献分布")
+        st.subheader("🏗️ 销售额分布")
         p_sum = df_view.groupby('所属项目')['销售金额'].sum().reset_index()
         st.plotly_chart(px.bar(p_sum, x='所属项目', y='销售金额', color_discrete_sequence=['#3B82F6'], template="plotly_white"), use_container_width=True)
     with col_r:
-        st.subheader("📈 品类分布占比")
+        st.subheader("📈 品类占比")
         c_sum = df_view.groupby('二级分类')['销售金额'].sum().reset_index()
         st.plotly_chart(px.pie(c_sum, values='销售金额', names='二级分类', hole=0.4), use_container_width=True)
 
-    st.subheader("📋 单品销量排行")
+    st.subheader("📋 单品表现详情")
     rank = df_view.groupby(['商品名称', '规格', '做法']).agg({'销售数量':'sum', '销售金额':'sum'}).sort_values('销售数量', ascending=False)
     st.dataframe(rank, use_container_width=True)
 
@@ -194,9 +198,9 @@ def view_dashboard():
 # =============================================================================
 if __name__ == "__main__":
     init_ui()
-    menu = st.sidebar.radio("功能导航", ["📊 经营看板", "⚙️ 配方中心"])
+    menu = st.sidebar.radio("系统导航", ["📊 经营看板", "⚙️ 配方中心"])
     if menu == "📊 经营看板":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("本地框架已就绪，确保报表读取正常后，我们开始搭建这里的配方录入逻辑。")
+        st.info("本地框架已就绪，接下来我们可以在这里完善配方录入逻辑。")
