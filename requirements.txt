@@ -1,5 +1,5 @@
 google-cloud-firestore
-google-oauth2
+google-auth
 pandas
 plotly
 openpyxl
