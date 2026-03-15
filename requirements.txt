@@ -1,7 +1,8 @@
-google-cloud-firestore
-google-auth
+streamlit
 pandas
 plotly
 openpyxl
 numpy
-streamlit
+google-cloud-firestore==2.14.0
+google-auth==2.23.0
+grpcio==1.60.0
