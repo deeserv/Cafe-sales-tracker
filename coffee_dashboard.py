@@ -9,12 +9,12 @@ from datetime import datetime, timedelta
 # 1. 业务逻辑配置：核心分类规则 (已补录：经典意式)
 # =============================================================================
 PROJECT_STORE_MAPPING = {
-    "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
+    "百度项目": ["度咖啡（百度鹏寰店）", "度小满店", "度咖啡（百度科技园店）", "度咖啡（百度奎科店）", "度咖啡（百度大厦店）", "度咖啡（百度上研店）"],
     "顿角项目": ["中信建投店", "北京移动美惠大厦店", "嘉铭中心店", "天津联想创新科技园店", "小米上海店", "快手万家灯火店", "悦读+车公庄店", "悦读+阜成路店", "新华三集团店", "科大讯飞店", "网易店", "联想总部店", "顿角咖啡研发中心店[高科岭]"],
     "光大项目": ["光大咖啡上地店", "光大咖啡上海分行店", "光大咖啡总行店"]
 }
 
-# 🌟 分类规则库：已补录“经典意式”进入咖啡饮品
+# 分类规则库
 CATEGORY_RULES = {
     "咖啡饮品": [
         "风味拿铁", "冰爽果咖", "SOE 冷萃", "SOE冷萃", "中式茶咖", "甄选咖啡", "优选咖啡", 
@@ -30,7 +30,7 @@ CATEGORY_RULES = {
 }
 
 # =============================================================================
-# 2. 核心算法：数据清洗与分类映射引擎
+# 2. 核心算法：数据处理引擎 (含销量下限保护)
 # =============================================================================
 def logic_parse_days(date_series):
     if date_series.empty: return 1
@@ -40,7 +40,7 @@ def logic_parse_days(date_series):
 def logic_clean_data(df):
     if df.empty: return df
     
-    # 重置索引并初步清理
+    # 重置索引并初步清理列名
     df = df.copy().reset_index(drop=True)
     df.columns = [str(c).strip().replace('\n', '').replace('\r', '').replace('`', '') for c in df.columns]
     
@@ -55,16 +55,20 @@ def logic_clean_data(df):
     }
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
-    # 数值转换
+    # 数值转换与清洗
     df['销售数量_raw'] = pd.to_numeric(df['销售数量_raw'], errors='coerce').fillna(0)
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
     refund = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
-    # 净销量 = 销量 - 退款
+    # 🌟 核心逻辑修复：净销量 = 销量 - 退款，且最小值锁定为 0
     df['销售数量'] = df['销售数量_raw'] - refund
-    df['销售金额'] = df['销售金额_raw']
+    df.loc[df['销售数量'] < 0, '销售数量'] = 0  # 🌟 修复：如果结果是 -1，强制改为 0
     
-    # 清理所有字符串字段中的不可见字符和反引号
+    df['销售金额'] = df['销售金额_raw']
+    # 金额也做一个保护，如果实收小于0（极少见），也按0算
+    df.loc[df['销售金额'] < 0, '销售金额'] = 0
+    
+    # 清理所有字符串字段中的反引号
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.replace('`', '').str.strip()
@@ -73,7 +77,7 @@ def logic_clean_data(df):
     s2p = {str(s).strip(): p for p, stores in PROJECT_STORE_MAPPING.items() for s in stores}
     df['所属项目'] = df['门店名称'].apply(lambda x: s2p.get(x, '其他项目')).values
     
-    # 映射一级分类逻辑
+    # 一级分类映射逻辑
     lookup = {sub: main for main, subs in CATEGORY_RULES.items() for sub in subs}
     df['二级分类'] = df['二级分类_原始'].str.strip()
     df['一级分类'] = df['二级分类'].map(lookup).fillna("其他")
@@ -81,7 +85,7 @@ def logic_clean_data(df):
     return df.reset_index(drop=True)
 
 # =============================================================================
-# 3. UI 界面
+# 3. UI 界面与 CSS 优化
 # =============================================================================
 def init_ui():
     st.set_page_config(page_title="顿角咖啡经营智能看板", page_icon="☕", layout="wide")
@@ -120,19 +124,12 @@ def view_dashboard():
                 st.success("报表同步成功！")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传报表。系统已补录“经典意式”分类，并启用“单品名称去规格汇总”模式。")
+        st.info("💡 请上传报表。系统已修复负数销量 Bug：所有小于 0 的净销量将自动修正为 0。")
         return
 
     # 数据处理
     df_clean = logic_clean_data(st.session_state.raw_data)
     
-    # --- 辅助诊断工具 ---
-    others = df_clean[df_clean['一级分类'] == "其他"]
-    if not others.empty:
-        with st.sidebar.expander("🕵️ 分类诊断"):
-            st.write("以下二级分类目前被归为“其他”：")
-            st.write(others['二级分类'].unique().tolist())
-
     # --- 筛选体系 ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔍 维度筛选")
@@ -154,7 +151,7 @@ def view_dashboard():
     days = logic_parse_days(df_final[['统计周期']])
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("净销售杯数", f"{q:,.0f} 杯")
+    c1.metric("净销售杯数", f"{q:,.0f} 杯", help="已剔除退款，且不会出现负数")
     c2.metric("总营收金额", f"¥{a:,.2f}")
     c3.metric("日均营收", f"¥{a/days:,.2f}")
     c4.metric("单杯均价", f"¥{a/q if q>0 else 0:.2f}")
@@ -173,12 +170,15 @@ def view_dashboard():
         c_sum = df_final.groupby('一级分类')['销售金额'].sum().reset_index()
         st.plotly_chart(px.pie(c_sum, values='销售金额', names='一级分类', hole=0.4), use_container_width=True)
 
-    # --- 商品明细表：执行“去规格化”汇总 ---
-    st.subheader("📋 单品销售排行 (按名称汇总)")
+    # --- 商品明细表：名称汇总且过滤掉 0 销量的行 ---
+    st.subheader("📋 单品销售排行 (去规格汇总)")
+    # 汇总
     rank = df_final.groupby(['商品名称', '二级分类']).agg({
         '销售数量': 'sum',
         '销售金额': 'sum'
-    }).sort_values('销售数量', ascending=False)
+    })
+    # 🌟 过滤：只保留销量或金额大于 0 的商品
+    rank = rank[(rank['销售数量'] > 0) | (rank['销售金额'] > 0)].sort_values('销售数量', ascending=False)
     
     st.dataframe(rank, use_container_width=True)
 
@@ -189,4 +189,4 @@ if __name__ == "__main__":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("“经典意式”已成功归入咖啡饮品分类。")
+        st.info("销量负数修正已生效。")
