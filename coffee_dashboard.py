@@ -49,10 +49,10 @@ def logic_clean_data(df):
     df['销售金额_raw'] = pd.to_numeric(df['销售金额_raw'], errors='coerce').fillna(0)
     df['退款数量_raw'] = pd.to_numeric(df['退款数量_raw'], errors='coerce').fillna(0) if '退款数量_raw' in df.columns else 0
     
-    # 🌟 修正后的核心逻辑：
-    # 1. 销售杯数 = 报表原始销量 (例如 830)
+    # 核心对账逻辑：
+    # 1. 销售杯数 = 报表原始销量
     df['销售杯数'] = df['销售数量_raw']
-    # 2. 净销售杯数 = 销售杯数 - 退款数 (例如 830 - 7 = 823)
+    # 2. 净销售杯数 = 销售杯数 - 退款数
     df['净销售杯数'] = df['销售杯数'] - df['退款数量_raw']
     
     # 金额保持原始实收
@@ -84,9 +84,11 @@ def init_ui():
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         .stApp { background-color: #F8FAFC; font-family: 'Inter', sans-serif; }
         section[data-testid="stSidebar"] div.stVerticalBlock { padding-top: 5rem !important; }
+        
+        /* 响应式指标卡 */
         div[data-testid="stMetric"] {
-            background-color: #FFFFFF; padding: 25px !important;
-            border-radius: 20px !important; border: 1px solid #E2E8F0 !important;
+            background-color: #FFFFFF; padding: 20px !important;
+            border-radius: 15px !important; border: 1px solid #E2E8F0 !important;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
         }
     </style>
@@ -114,7 +116,7 @@ def view_dashboard():
                 st.success("报表已同步，请开始分析。")
 
     if st.session_state.raw_data.empty:
-        st.info("💡 请上传报表。当前对账公式：[销售杯数 = 报表销量], [净销售杯数 = 销售杯数 - 退款数]")
+        st.info("💡 请上传报表。当前对账公式：[销售杯数] - [退款杯数] = [净销售杯数]")
         return
 
     # 数据处理
@@ -142,11 +144,13 @@ def view_dashboard():
     revenue = df_final['销售金额'].sum()
     days = logic_parse_days(df_final[['统计周期']])
     
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("销售杯数", f"{gross_sales:,.0f} 杯", help="报表原始销量")
-    c2.metric("净销售杯数", f"{net_sales:,.0f} 杯", help="计算逻辑：销售杯数 - 退款数")
-    c3.metric("总营收金额", f"¥{revenue:,.2f}")
-    c4.metric("单杯成交均价 (净)", f"¥{revenue/net_sales if net_sales!=0 else 0:.2f}")
+    # 🌟 调整为 5 列显示，让对账一目了然
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("销售杯数", f"{gross_sales:,.0f} 杯", help="报表原始销量（含退款）")
+    c2.metric("退款杯数", f"{refund_count:,.0f} 杯", help="报表记录的退款总数")
+    c3.metric("净销售杯数", f"{net_sales:,.0f} 杯", help="计算逻辑：销售杯数 - 退款数")
+    c4.metric("总营收金额", f"¥{revenue:,.2f}")
+    c5.metric("单杯均价 (净)", f"¥{revenue/net_sales if net_sales!=0 else 0:.2f}")
 
     # --- 对账明细表 ---
     st.divider()
@@ -176,4 +180,4 @@ if __name__ == "__main__":
         view_dashboard()
     else:
         st.title("⚙️ 成本配方中心")
-        st.info("对账逻辑已根据您的反馈彻底修正：销售杯数(830) - 退款(7) = 净销售(823)。")
+        st.info("对账看板已升级。新增“退款杯数”独立指标。")
