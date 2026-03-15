@@ -1,8 +1,6 @@
-google-cloud-firestore
-google-auth
-protobuf==3.20.3
+streamlit
 pandas
 plotly
 openpyxl
-numpy
-streamlit
+google-cloud-firestore
+google-auth
